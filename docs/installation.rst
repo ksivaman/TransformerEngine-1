@@ -56,4 +56,3 @@ Execute the following command to install the latest development build of Transfo
 .. code-block:: bash
 
    pip install --upgrade git+https://github.com/NVIDIA/TransformerEngine.git@main
-

@@ -9,5 +9,5 @@ try:
 except:
     te_imported = False
 
-assert te_imported, 'transformer_engine import failed'
+assert te_imported, "transformer_engine import failed"
 print("OK")

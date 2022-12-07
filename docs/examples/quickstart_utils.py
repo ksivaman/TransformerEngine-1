@@ -131,7 +131,7 @@ class BasicMLP(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.linear1(x)
-        x = torch.nn.functional.gelu(x, approximate='tanh')
+        x = torch.nn.functional.gelu(x, approximate="tanh")
         x = self.linear2(x)
         return x
 
@@ -196,11 +196,11 @@ def share_parameters_with_transformerlayer_te_model(te_model, basic_model):
     te_model.layernorm_mlp.fc2_bias = basic_model.mlp.linear2.bias
 
 
-def cast_to_representable(inp, scale=1.0, fp8_format='e4m3'):
+def cast_to_representable(inp, scale=1.0, fp8_format="e4m3"):
     import transformer_engine.pytorch.cpp_extensions as texcpp
     import transformer_engine_extensions as tex
 
-    fp8_type = tex.DType.kFloat8E4M3 if fp8_format == 'e4m3' else tex.DType.kFloat8E5M2
+    fp8_type = tex.DType.kFloat8E4M3 if fp8_format == "e4m3" else tex.DType.kFloat8E5M2
     input_type = texcpp.TE_DType[inp.dtype]
     meta = tex.FP8TensorMeta()
     meta.scale = torch.ones(1, dtype=torch.float32, device="cuda") * scale
