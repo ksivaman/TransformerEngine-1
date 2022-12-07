@@ -9,7 +9,7 @@ ci:
   autofix_prs: true
   autoupdate_commit_msg: '[pre-commit.ci] pre-commit suggestions'
   autoupdate_schedule: quarterly
-  skip: [pylint]
+  skip: [pylint, clang-format, cpplint]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -35,3 +35,22 @@ repos:
             [
                 "--rcfile=./qa/L0_lint/pylintrc",
             ]
+
+-   repo: local
+    hooks:
+    -   id: clang-format
+        name: clang-format
+        description: Format files with ClangFormat.
+        entry: clang-format -i
+        language: system
+        files: \.(c|cc|cxx|cpp|cu|cuh|h|hpp)$
+
+-   repo: local
+    hooks:
+    -   id: cpplint
+        name: cpplint
+        description: Check c++ code style
+        entry: cpplint
+        language: system
+        files: \.(c|cc|cxx|cpp|cu|cuh|h|hpp)$
+        args: ["--filter=-legal/copyright"]
