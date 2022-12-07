@@ -1,0 +1,7 @@
+---
+BasedOnStyle: Google
+---
+Language: Cpp
+DerivePointerAlignment: False
+PointerAlignment: Right
+IncludeBlocks: Preserve

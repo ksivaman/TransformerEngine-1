@@ -9,15 +9,16 @@ ci:
   autofix_prs: true
   autoupdate_commit_msg: '[pre-commit.ci] pre-commit suggestions'
   autoupdate_schedule: quarterly
+  skip: [pylint, clang-format, cpplint]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.3.0
     hooks:
       - id: check-yaml
-      - id: check-case-conflict
-      - id: detect-private-key
-      - id: requirements-txt-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: end-of-file-fixer
       - id: trailing-whitespace
 
   - repo: https://github.com/PyCQA/isort
@@ -32,6 +33,31 @@ repos:
     rev: 19.10b0
     hooks:
       - id: black
-        name: Format code
-        args: [--skip-string-normalization, --line-length=100]
+        name: Format python code
+        args: [--line-length=100]
         additional_dependencies: ['click==8.0.2']
+
+  - repo: local
+    hooks:
+      - id: pylint
+        name: Check python code style
+        entry: python -m pylint
+        language: system
+        types: [python]
+        args: ["--rcfile=./pylintrc"]
+
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: Format c/cpp/cuda code
+        entry: clang-format -i
+        language: system
+        files: \.(c|cc|cxx|cpp|cu|cuh|h|hpp)$
+
+  - repo: local
+    hooks:
+      - id: cpplint
+        name: Check c/cpp/cuda code style
+        entry: cpplint
+        language: system
+        files: \.(c|cc|cxx|cpp|cu|cuh|h|hpp)$
