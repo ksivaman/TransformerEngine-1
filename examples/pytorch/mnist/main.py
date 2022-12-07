@@ -95,19 +95,35 @@ def main():
     # Training settings
     parser = argparse.ArgumentParser(description="PyTorch MNIST Example")
     parser.add_argument(
-        "--batch-size", type=int, default=64, metavar="N", help="input batch size for training (default: 64)",
+        "--batch-size",
+        type=int,
+        default=64,
+        metavar="N",
+        help="input batch size for training (default: 64)",
     )
     parser.add_argument(
-        "--test-batch-size", type=int, default=1000, metavar="N", help="input batch size for testing (default: 1000)",
+        "--test-batch-size",
+        type=int,
+        default=1000,
+        metavar="N",
+        help="input batch size for testing (default: 1000)",
     )
     parser.add_argument(
-        "--epochs", type=int, default=14, metavar="N", help="number of epochs to train (default: 14)",
+        "--epochs",
+        type=int,
+        default=14,
+        metavar="N",
+        help="number of epochs to train (default: 14)",
     )
     parser.add_argument(
         "--lr", type=float, default=1.0, metavar="LR", help="learning rate (default: 1.0)",
     )
     parser.add_argument(
-        "--gamma", type=float, default=0.7, metavar="M", help="Learning rate step gamma (default: 0.7)",
+        "--gamma",
+        type=float,
+        default=0.7,
+        metavar="M",
+        help="Learning rate step gamma (default: 0.7)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", default=False, help="quickly check a single pass",
@@ -124,7 +140,9 @@ def main():
         "--save-model", action="store_true", default=False, help="For Saving the current Model",
     )
     parser.add_argument("--use-fp8", action="store_true", default=False, help="Use FP8 training")
-    parser.add_argument("--use-te", action="store_true", default=False, help="Use Transformer Engine")
+    parser.add_argument(
+        "--use-te", action="store_true", default=False, help="Use Transformer Engine"
+    )
     args = parser.parse_args()
     use_cuda = torch.cuda.is_available()
 
@@ -143,7 +161,9 @@ def main():
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+    transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+    )
     dataset1 = datasets.MNIST("../data", train=True, download=True, transform=transform)
     dataset2 = datasets.MNIST("../data", train=False, transform=transform)
     train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)

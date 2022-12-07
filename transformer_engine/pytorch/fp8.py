@@ -167,7 +167,9 @@ def copy_amax_from_global_buffer(fp8_meta: Dict[str, Any], forward: bool = True)
     if buffer_position_key not in fp8_meta:
         return
     amax_buffer_key = get_amax_buffer_key(fp8_meta, forward=forward)
-    fp8_meta[fp8_meta_tensor_key].amax_history[0] = _global_fp8_buffer[amax_buffer_key][fp8_meta[buffer_position_key]]
+    fp8_meta[fp8_meta_tensor_key].amax_history[0] = _global_fp8_buffer[amax_buffer_key][
+        fp8_meta[buffer_position_key]
+    ]
 
 
 def set_amax_buffer_key_deletion(fp8_meta: Dict[str, Any], forward: bool = True) -> None:
@@ -190,7 +192,9 @@ def get_default_fp8_recipe() -> DelayedScaling:
 
 @contextmanager
 def fp8_autocast(
-    enabled: bool = False, fp8_recipe: Optional[DelayedScaling] = None, fp8_group: Optional[dist_group_type] = None,
+    enabled: bool = False,
+    fp8_recipe: Optional[DelayedScaling] = None,
+    fp8_group: Optional[dist_group_type] = None,
 ) -> None:
     """
     Context manager for FP8 usage.
@@ -298,7 +302,9 @@ def update_amax_history(amax_history: torch.Tensor) -> torch.Tensor:
 
 
 @torch.jit.script
-def _default_get_amax(amax_history: torch.Tensor, amax_compute_algo: str,) -> Tuple[torch.Tensor, torch.Tensor]:
+def _default_get_amax(
+    amax_history: torch.Tensor, amax_compute_algo: str,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Default function to obtain amax from history."""
     if amax_compute_algo == "max":
         amax = torch.max(amax_history, dim=0).values
@@ -310,7 +316,9 @@ def _default_get_amax(amax_history: torch.Tensor, amax_compute_algo: str,) -> Tu
 
 
 @torch.jit.script
-def _default_sf_compute(amax: torch.Tensor, scale: torch.Tensor, fp8_max: float, margin: int,) -> torch.Tensor:
+def _default_sf_compute(
+    amax: torch.Tensor, scale: torch.Tensor, fp8_max: float, margin: int,
+) -> torch.Tensor:
     """Default function to convert amax to scaling factor."""
     exp = torch.floor(torch.log2(fp8_max / amax)) - margin
     sf = torch.round(torch.pow(2, torch.abs(exp)))
@@ -323,7 +331,11 @@ def _default_sf_compute(amax: torch.Tensor, scale: torch.Tensor, fp8_max: float,
 
 @torch.jit.script
 def fused_amax_and_scale_update(
-    amax_history: torch.Tensor, scale: torch.Tensor, fp8_max: float, margin: int, amax_compute_algo: str,
+    amax_history: torch.Tensor,
+    scale: torch.Tensor,
+    fp8_max: float,
+    margin: int,
+    amax_compute_algo: str,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Amax to scale conversion."""
 
@@ -334,7 +346,9 @@ def fused_amax_and_scale_update(
     return amax_history, _default_sf_compute(amax, scale, fp8_max, margin,)
 
 
-def _compute_amax(amax_history: torch.Tensor, recipe: DelayedScaling,) -> Tuple[torch.Tensor, torch.Tensor]:
+def _compute_amax(
+    amax_history: torch.Tensor, recipe: DelayedScaling,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Obtain the amax from the history."""
 
     if callable(recipe.amax_compute_algo):
@@ -383,7 +397,9 @@ def amax_and_scale_update(fp8_meta: Dict[str, Any], fwd_update: bool,) -> None:
 
 def get_fp8_te_dtype(fp8_recipe: DelayedScaling, fprop_tensor: bool = True) -> tex.DType:
     """Get fp8 data type according to recipe and tensor"""
-    if fp8_recipe.fp8_format == Format.E4M3 or (fp8_recipe.fp8_format == Format.HYBRID and fprop_tensor):
+    if fp8_recipe.fp8_format == Format.E4M3 or (
+        fp8_recipe.fp8_format == Format.HYBRID and fprop_tensor
+    ):
         return tex.DType.kFloat8E4M3
     return tex.DType.kFloat8E5M2
 

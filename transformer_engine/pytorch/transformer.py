@@ -11,7 +11,12 @@ from typing import Any, Callable, Optional, Tuple, Union
 import torch
 from torch.nn.parameter import Parameter
 from transformer_engine.pytorch import LayerNorm, LayerNormLinear, LayerNormMLP, Linear
-from transformer_engine.pytorch.constants import AttnMaskTypes, AttnTypes, LayerTypes, dist_group_type
+from transformer_engine.pytorch.constants import (
+    AttnMaskTypes,
+    AttnTypes,
+    LayerTypes,
+    dist_group_type,
+)
 from transformer_engine.pytorch.distributed import (
     checkpoint,
     get_distributed_world_size,
@@ -52,7 +57,9 @@ class DropPath(torch.nn.Module):
         keep_prob = 1 - self.drop_prob
         # work with diff dim tensors, not just 2D ConvNets
         shape = (hidden_state.shape[0],) + (1,) * (hidden_state.ndim - 1)
-        random_tensor = keep_prob + torch.rand(shape, dtype=hidden_state.dtype, device=hidden_state.device)
+        random_tensor = keep_prob + torch.rand(
+            shape, dtype=hidden_state.dtype, device=hidden_state.device
+        )
         random_tensor.floor_()  # binarize
         output = hidden_state.div(keep_prob) * random_tensor
         return output
@@ -393,7 +400,9 @@ class MultiHeadAttention(torch.nn.Module):
         )
 
         if bias:
-            bias_tensor = torch.empty(out_features, device=torch.cuda.current_device(), dtype=self.params_dtype,)
+            bias_tensor = torch.empty(
+                out_features, device=torch.cuda.current_device(), dtype=self.params_dtype,
+            )
             self.query_bias = Parameter(bias_tensor[0:qkv_first_dim])
             self.key_bias = Parameter(bias_tensor[qkv_first_dim : 2 * qkv_first_dim])
             self.value_bias = Parameter(bias_tensor[2 * qkv_first_dim : 3 * qkv_first_dim])
@@ -483,24 +492,32 @@ class MultiHeadAttention(torch.nn.Module):
                     inference_value_memory,
                 )
             else:
-                (inference_key_memory, inference_value_memory,) = inference_params.key_value_memory_dict[
-                    self.layer_number
-                ]
+                (
+                    inference_key_memory,
+                    inference_value_memory,
+                ) = inference_params.key_value_memory_dict[self.layer_number]
 
         # =====================
         # Query, Key, and Value
         # =====================
 
         if self.attention_type == "self":
-            qkv_weight = torch.cat((self.query, self.key, self.value)) if not self.fuse_qkv_params else None
+            qkv_weight = (
+                torch.cat((self.query, self.key, self.value)) if not self.fuse_qkv_params else None
+            )
             qkv_bias = (
-                torch.cat((self.query_bias, self.key_bias, self.value_bias)) if not self.fuse_qkv_params else None
+                torch.cat((self.query_bias, self.key_bias, self.value_bias))
+                if not self.fuse_qkv_params
+                else None
             )
 
             # Attention heads [sq, b, h] --> [sq, b, (np * 3 * hn)]
             if self.input_layernorm:
                 layernorm_qkv_outputs = self.layernorm_qkv(
-                    hidden_states, weight=qkv_weight, bias=qkv_bias, is_first_microbatch=is_first_microbatch,
+                    hidden_states,
+                    weight=qkv_weight,
+                    bias=qkv_bias,
+                    is_first_microbatch=is_first_microbatch,
                 )
                 if self.return_layernorm_output:
                     mixed_x_layer, layernorm_output = layernorm_qkv_outputs
@@ -508,7 +525,10 @@ class MultiHeadAttention(torch.nn.Module):
                     mixed_x_layer = layernorm_qkv_outputs
             else:
                 mixed_x_layer = self.qkv(
-                    hidden_states, weight=qkv_weight, bias=qkv_bias, is_first_microbatch=is_first_microbatch,
+                    hidden_states,
+                    weight=qkv_weight,
+                    bias=qkv_bias,
+                    is_first_microbatch=is_first_microbatch,
                 )
 
             # [sq, b, (np * 3 * hn)] --> [sq, b, np, 3 * hn]
@@ -522,11 +542,16 @@ class MultiHeadAttention(torch.nn.Module):
             query_layer, key_layer, value_layer = split_tensor_along_last_dim(mixed_x_layer, 3)
         else:
             kv_weight = torch.cat((self.key, self.value)) if not self.fuse_qkv_params else None
-            kv_bias = torch.cat((self.key_bias, self.value_bias)) if not self.fuse_qkv_params else None
+            kv_bias = (
+                torch.cat((self.key_bias, self.value_bias)) if not self.fuse_qkv_params else None
+            )
 
             # Attention heads [sk, b, h] --> [sk, b, (np * 2 * hn)]
             mixed_kv_layer = self.key_value(
-                encoder_output, weight=kv_weight, bias=kv_bias, is_first_microbatch=is_first_microbatch,
+                encoder_output,
+                weight=kv_weight,
+                bias=kv_bias,
+                is_first_microbatch=is_first_microbatch,
             )
 
             # [sk, b, (np * 2 * hn)] --> [sk, b, np, 2 * hn]
@@ -542,7 +567,10 @@ class MultiHeadAttention(torch.nn.Module):
             # Attention head [sq, b, h] --> [sq, b, hp]
             if self.input_layernorm:
                 layernorm_query_outputs = self.layernorm_query(
-                    hidden_states, weight=self.query, bias=self.query_bias, is_first_microbatch=is_first_microbatch,
+                    hidden_states,
+                    weight=self.query,
+                    bias=self.query_bias,
+                    is_first_microbatch=is_first_microbatch,
                 )
                 if self.return_layernorm_output:
                     query_layer, layernorm_output = layernorm_query_outputs
@@ -550,7 +578,10 @@ class MultiHeadAttention(torch.nn.Module):
                     query_layer = layernorm_query_outputs
             else:
                 query_layer = self.query(
-                    hidden_states, weight=self.query, bias=self.query_bias, is_first_microbatch=is_first_microbatch,
+                    hidden_states,
+                    weight=self.query,
+                    bias=self.query_bias,
+                    is_first_microbatch=is_first_microbatch,
                 )
 
             # [sq, b, hp] --> [sq, b, np, hn]
@@ -572,8 +603,12 @@ class MultiHeadAttention(torch.nn.Module):
             sequence_end = sequence_start + key_layer.size(0)
             assert sequence_end <= inference_key_memory.size(0)
             # Copy key and values.
-            inference_key_memory[sequence_start:sequence_end, batch_start:batch_end, ...] = key_layer
-            inference_value_memory[sequence_start:sequence_end, batch_start:batch_end, ...] = value_layer
+            inference_key_memory[
+                sequence_start:sequence_end, batch_start:batch_end, ...
+            ] = key_layer
+            inference_value_memory[
+                sequence_start:sequence_end, batch_start:batch_end, ...
+            ] = value_layer
             key_layer = inference_key_memory[:sequence_end, batch_start:batch_end, ...]
             value_layer = inference_value_memory[:sequence_end, batch_start:batch_end, ...]
 
@@ -592,7 +627,9 @@ class MultiHeadAttention(torch.nn.Module):
         # Output. [sq, b, h]
         # =================
 
-        attention_output, attention_bias = self.proj(context_layer, is_first_microbatch=is_first_microbatch)
+        attention_output, attention_bias = self.proj(
+            context_layer, is_first_microbatch=is_first_microbatch
+        )
 
         if self.input_layernorm and self.return_layernorm_output:
             return attention_output, attention_bias, layernorm_output
@@ -735,11 +772,15 @@ class TransformerLayer(torch.nn.Module):
         self.output_layernorm = output_layernorm
         self.layer_type = layer_type
         self.apply_residual_connection_post_layernorm = apply_residual_connection_post_layernorm
-        assert self_attn_mask_type in AttnMaskTypes, f"self_attn_mask_type {self_attn_mask_type} not supported"
+        assert (
+            self_attn_mask_type in AttnMaskTypes
+        ), f"self_attn_mask_type {self_attn_mask_type} not supported"
         assert layer_type in LayerTypes, f"layer_type {layer_type} not supported"
 
         if not fuse_qkv_params:
-            assert not fuse_wgrad_accumulation, "Gradient accumulation fusion requires single QKV parameter."
+            assert (
+                not fuse_wgrad_accumulation
+            ), "Gradient accumulation fusion requires single QKV parameter."
 
         self.kv_channels = kv_channels if kv_channels else (hidden_size // num_attention_heads)
 
@@ -928,7 +969,9 @@ class TransformerLayer(torch.nn.Module):
         # Bias dropoout add.
         if self.drop_path is None:
             with self.bias_dropout_add_exec_handler():
-                bda_output = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
+                bda_output = bias_dropout_add_func(
+                    attention_output, attention_bias, residual, self.hidden_dropout
+                )
         else:
             out = torch.nn.functional.dropout(
                 attention_output + attention_bias, p=self.hidden_dropout, training=self.training,
@@ -951,7 +994,9 @@ class TransformerLayer(torch.nn.Module):
                 residual = bda_output
 
             with self.bias_dropout_add_exec_handler():
-                bda_output = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
+                bda_output = bias_dropout_add_func(
+                    attention_output, attention_bias, residual, self.hidden_dropout
+                )
 
         # MLP.
         mlp_outputs = self.layernorm_mlp(bda_output, is_first_microbatch=is_first_microbatch)
@@ -966,7 +1011,9 @@ class TransformerLayer(torch.nn.Module):
             with self.bias_dropout_add_exec_handler():
                 output = bias_dropout_add_func(mlp_output, mlp_bias, residual, self.hidden_dropout)
         else:
-            out = torch.nn.functional.dropout(mlp_output + mlp_bias, p=self.hidden_dropout, training=self.training)
+            out = torch.nn.functional.dropout(
+                mlp_output + mlp_bias, p=self.hidden_dropout, training=self.training
+            )
             output = residual + self.drop_path(out)
 
         # For BERT like architectures.

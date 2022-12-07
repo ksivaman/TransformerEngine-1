@@ -57,7 +57,9 @@ def _test_sanity_e2e_amp(block, bs, dtype, config, skip_wgrad):
 
 
 def _test_sanity_e2e(block, bs, dtype, config, skip_wgrad):
-    te_inp_hidden_states = torch.randn(config.seq_len, bs, config.hidden_size, dtype=dtype, requires_grad=True).cuda()
+    te_inp_hidden_states = torch.randn(
+        config.seq_len, bs, config.hidden_size, dtype=dtype, requires_grad=True
+    ).cuda()
     te_inp_attn_mask = torch.rand((1, 1, config.seq_len, config.seq_len,)).cuda().bool()
 
     if skip_wgrad:
@@ -70,7 +72,9 @@ def _test_sanity_e2e(block, bs, dtype, config, skip_wgrad):
 
 
 def _test_sanity_e2e_T5(block, bs, dtype, config, skip_wgrad):
-    te_inp_hidden_states = torch.randn(config.seq_len, bs, config.hidden_size, dtype=dtype, requires_grad=True).cuda()
+    te_inp_hidden_states = torch.randn(
+        config.seq_len, bs, config.hidden_size, dtype=dtype, requires_grad=True
+    ).cuda()
     te_inp_attn_mask = torch.rand((1, 1, config.seq_len, config.seq_len,)).cuda().bool()
 
     if skip_wgrad:
@@ -83,7 +87,9 @@ def _test_sanity_e2e_T5(block, bs, dtype, config, skip_wgrad):
 
 
 def _test_sanity_common(block, bs, dtype, config, skip_wgrad):
-    te_inp = torch.randn(config.seq_len, bs, config.hidden_size, dtype=dtype, requires_grad=True).cuda()
+    te_inp = torch.randn(
+        config.seq_len, bs, config.hidden_size, dtype=dtype, requires_grad=True
+    ).cuda()
 
     if skip_wgrad:
         _disable_wgrads(block)
@@ -107,7 +113,9 @@ def test_sanity_layernorm_linear(dtype, bs, model, skip_wgrad):
     init_method = init_method_normal(sigma)
 
     block = (
-        LayerNormLinear(config.hidden_size, config.hidden_size * 3, eps=config.eps, init_method=init_method,)
+        LayerNormLinear(
+            config.hidden_size, config.hidden_size * 3, eps=config.eps, init_method=init_method,
+        )
         .to(dtype=dtype)
         .cuda()
     )
@@ -124,7 +132,11 @@ def test_sanity_linear(dtype, bs, model, skip_wgrad):
     sigma = 0.023
     output_layer_init_method = scaled_init_method_normal(sigma, config.num_layers)
 
-    block = Linear(config.hidden_size, config.hidden_size, init_method=output_layer_init_method).to(dtype=dtype).cuda()
+    block = (
+        Linear(config.hidden_size, config.hidden_size, init_method=output_layer_init_method)
+        .to(dtype=dtype)
+        .cuda()
+    )
 
     _test_sanity_common(block, bs, dtype, config, skip_wgrad)
 

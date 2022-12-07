@@ -53,7 +53,9 @@ class DotProductAttention(torch.nn.Module):
 
     """
 
-    def __init__(self, num_attention_heads: int, kv_channels: int, attention_dropout: float,) -> None:
+    def __init__(
+        self, num_attention_heads: int, kv_channels: int, attention_dropout: float,
+    ) -> None:
         super().__init__()
         self.projection_size = kv_channels * num_attention_heads
         self.hidden_size_per_attention_head = kv_channels
@@ -83,7 +85,9 @@ class DotProductAttention(torch.nn.Module):
         # [sk, b, np, hn] -> [sk, b * np, hn]
         key = key.view(sk, b * np, -1)
 
-        bmm1 = torch.bmm(query.transpose(0, 1), key.transpose(0, 1).transpose(1, 2)) / self.norm_factor
+        bmm1 = (
+            torch.bmm(query.transpose(0, 1), key.transpose(0, 1).transpose(1, 2)) / self.norm_factor
+        )
 
         # change view to [b, np, sq, sk]
         attention_scores = bmm1.view(b, np, sq, sk)
