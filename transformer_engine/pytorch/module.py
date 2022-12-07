@@ -6,73 +6,64 @@
 import os
 import warnings
 from abc import ABC, abstractmethod
-from typing import Union, Optional, Callable, Tuple, Dict, List, Any
 from functools import partial
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
-from torch.nn.parameter import Parameter
-from torch.nn import init
-
 import transformer_engine_extensions as tex
-from .fp8 import (
-    is_fp8_enabled,
-    get_fp8_recipe,
-    get_fp8_group,
-    get_default_fp8_recipe,
-    get_fp8_te_dtype,
-    is_first_fp8_module,
-    new_fp8_context_id,
-    get_fp8_context_id,
-    set_fp8_context_id,
-    add_amax_to_global_buffer,
-    copy_amax_from_global_buffer,
-    global_amax_reduction,
-    setup_amax_forward_global_reduce_func,
-    amax_and_scale_update,
-    get_global_fp8_buffer,
-    set_global_fp8_buffer,
-    get_global_fp8_recompute_buffer,
-    set_global_fp8_recompute_buffer,
-    set_amax_buffer_key_deletion,
-    delete_key_from_amax_buffer,
-    copy_forward_fp8_meta_tensors_for_recompute,
-    get_old_fp8_meta_tensors_for_recompute,
-    restore_fp8_meta_tensors,
-)
-from .jit import (
-    bias_gelu_fused,
-    bgrad_dgelu_fused,
-    set_jit_fusion_options,
-    warmup_jit_bias_gelu_all_dtypes,
-)
-from .utils import (
-    divide,
-    get_default_init_method,
-    cast_if_needed,
-)
-from .distributed import (
-    set_tensor_model_parallel_attributes,
-    get_distributed_world_size,
-    allreduce,
-    initialize_affine_weight_gpu,
-    reduce_scatter_along_first_dim,
-    gather_along_first_dim,
-    gather_along_last_dim,
-    is_fp8_activation_recompute_enabled,
-    in_fp8_activation_recompute_phase,
-)
+from torch.nn import init
+from torch.nn.parameter import Parameter
+
+from .constants import GemmParallelModes, TE_DType, dist_group_type
 from .cpp_extensions import (
+    cast_from_fp8,
+    cast_to_fp8,
+    fp8_cast_transpose_bgrad_dgelu_fused,
+    fp8_cast_transpose_bgrad_fused,
+    fp8_cast_transpose_fused,
+    fp8_gelu,
     fp8_gemm,
     gemm,
-    fp8_cast_transpose_fused,
-    fp8_cast_transpose_bgrad_fused,
-    fp8_gelu,
-    fp8_cast_transpose_bgrad_dgelu_fused,
     layernorm_fwd_fp8,
-    cast_to_fp8,
-    cast_from_fp8,
 )
-from .constants import GemmParallelModes, dist_group_type, TE_DType
+from .distributed import (
+    allreduce,
+    gather_along_first_dim,
+    gather_along_last_dim,
+    get_distributed_world_size,
+    in_fp8_activation_recompute_phase,
+    initialize_affine_weight_gpu,
+    is_fp8_activation_recompute_enabled,
+    reduce_scatter_along_first_dim,
+    set_tensor_model_parallel_attributes,
+)
+from .fp8 import (
+    add_amax_to_global_buffer,
+    amax_and_scale_update,
+    copy_amax_from_global_buffer,
+    copy_forward_fp8_meta_tensors_for_recompute,
+    delete_key_from_amax_buffer,
+    get_default_fp8_recipe,
+    get_fp8_context_id,
+    get_fp8_group,
+    get_fp8_recipe,
+    get_fp8_te_dtype,
+    get_global_fp8_buffer,
+    get_global_fp8_recompute_buffer,
+    get_old_fp8_meta_tensors_for_recompute,
+    global_amax_reduction,
+    is_first_fp8_module,
+    is_fp8_enabled,
+    new_fp8_context_id,
+    restore_fp8_meta_tensors,
+    set_amax_buffer_key_deletion,
+    set_fp8_context_id,
+    set_global_fp8_buffer,
+    set_global_fp8_recompute_buffer,
+    setup_amax_forward_global_reduce_func,
+)
+from .jit import bgrad_dgelu_fused, bias_gelu_fused, set_jit_fusion_options, warmup_jit_bias_gelu_all_dtypes
+from .utils import cast_if_needed, divide, get_default_init_method
 
 _2X_ACC_FPROP = False
 _2X_ACC_DGRAD = True
@@ -91,9 +82,7 @@ def get_workspace() -> torch.Tensor:
     """Returns workspace for cublas."""
     global _cublas_workspace
     if _cublas_workspace is None:
-        _cublas_workspace = torch.empty(
-            get_cublas_workspace_size_bytes(), dtype=torch.int8, device="cuda"
-        )
+        _cublas_workspace = torch.empty(get_cublas_workspace_size_bytes(), dtype=torch.int8, device="cuda")
     return _cublas_workspace
 
 
@@ -117,22 +106,13 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
     def set_meta_tensor(self, fwd: bool) -> None:
         """Init scales and amaxes for fwd | bwd."""
         fp8_meta_tensor_key = "scaling_fwd" if fwd else "scaling_bwd"
-        num_fp8_tensors = (
-            self.fp8_meta["num_gemms"] * 2 if fwd else self.fp8_meta["num_gemms"]
-        )
+        num_fp8_tensors = self.fp8_meta["num_gemms"] * 2 if fwd else self.fp8_meta["num_gemms"]
 
         self.fp8_meta[fp8_meta_tensor_key] = tex.FP8TensorMeta()
-        self.fp8_meta[fp8_meta_tensor_key].scale = torch.ones(
-            num_fp8_tensors, dtype=torch.float32, device="cuda"
-        )
-        self.fp8_meta[fp8_meta_tensor_key].scale_inv = torch.ones(
-            num_fp8_tensors, dtype=torch.float32, device="cuda"
-        )
+        self.fp8_meta[fp8_meta_tensor_key].scale = torch.ones(num_fp8_tensors, dtype=torch.float32, device="cuda")
+        self.fp8_meta[fp8_meta_tensor_key].scale_inv = torch.ones(num_fp8_tensors, dtype=torch.float32, device="cuda")
         self.fp8_meta[fp8_meta_tensor_key].amax_history = torch.zeros(
-            self.fp8_meta["recipe"].amax_history_len,
-            num_fp8_tensors,
-            dtype=torch.float32,
-            device="cuda",
+            self.fp8_meta["recipe"].amax_history_len, num_fp8_tensors, dtype=torch.float32, device="cuda",
         )
 
     def init_fp8_meta_tensors(self) -> None:
@@ -173,8 +153,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         # Maintain backward compatibility with v0.2.0 and older.
         if isinstance(state, list):
             warnings.warn(
-                "This checkpoint format is deprecated and will be"
-                "removed in a future release of Transformer Engine"
+                "This checkpoint format is deprecated and will be" "removed in a future release of Transformer Engine"
             )
 
             # Retrieve checkpointed items.
@@ -183,9 +162,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
             scale_bwd = state[2]
             amax_history_bwd = state[3]
             self.fp8_meta["recipe"].amax_history_len = amax_history_fwd.shape[0]
-            self.fp8_meta["num_gemms"] = (
-                amax_history_fwd.shape[1] // 2
-            )  # Two FWD tensors per GEMM
+            self.fp8_meta["num_gemms"] = amax_history_fwd.shape[1] // 2  # Two FWD tensors per GEMM
 
             # Initialize before loading
             self.init_fp8_meta_tensors()
@@ -232,23 +209,11 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         if hasattr(self, "activation_dtype"):
             return
 
-        assert all(
-            (
-                (inp.dtype == param.dtype) if param is not None else True
-                for param in self.parameters()
-            )
-        ), (
-            "Data type for activations and weights must "
-            "match when outside of autocasted region"
+        assert all(((inp.dtype == param.dtype) if param is not None else True for param in self.parameters())), (
+            "Data type for activations and weights must " "match when outside of autocasted region"
         )
-        assert all(
-            (
-                (inp.dtype == buf.dtype) if buf is not None else True
-                for buf in self.buffers()
-            )
-        ), (
-            "Data type for activations and buffers must "
-            "match when outside of autocasted region"
+        assert all(((inp.dtype == buf.dtype) if buf is not None else True for buf in self.buffers())), (
+            "Data type for activations and buffers must " "match when outside of autocasted region"
         )
         self.activation_dtype = inp.dtype
 
@@ -268,30 +233,16 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
             weight_cast_attr = f"weight{i}_fp8"
             weight_transpose_attr = f"weight{i}_t_fp8"
 
-            if (
-                hasattr(self, weight_cast_attr)
-                and getattr(self, weight_cast_attr).shape == shape
-            ):
+            if hasattr(self, weight_cast_attr) and getattr(self, weight_cast_attr).shape == shape:
                 return
 
             setattr(
-                self,
-                weight_cast_attr,
-                torch.empty(
-                    shape,
-                    device=torch.cuda.current_device(),
-                    dtype=torch.int8,
-                ),
+                self, weight_cast_attr, torch.empty(shape, device=torch.cuda.current_device(), dtype=torch.int8,),
             )
             setattr(
                 self,
                 weight_transpose_attr,
-                torch.empty(
-                    shape[1],
-                    shape[0],
-                    device=torch.cuda.current_device(),
-                    dtype=torch.int8,
-                ),
+                torch.empty(shape[1], shape[0], device=torch.cuda.current_device(), dtype=torch.int8,),
             )
 
     def set_tensor_parallel_group(self, tp_group: Union[dist_group_type, None]) -> None:
@@ -364,11 +315,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
             self.fp8_meta["update_amax_and_scale_fwd"] = False
 
         # Activation recomputation is used and this is the first forward phase.
-        if (
-            self.fp8
-            and is_fp8_activation_recompute_enabled()
-            and not in_fp8_activation_recompute_phase()
-        ):
+        if self.fp8 and is_fp8_activation_recompute_enabled() and not in_fp8_activation_recompute_phase():
             copy_forward_fp8_meta_tensors_for_recompute(self.fp8_meta)
 
         return inp.contiguous()
@@ -387,11 +334,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         if self.fp8 and self.training and self.fp8_meta["recipe"].reduce_amax:
             set_fp8_context_id(self.fp8_meta["autocast_id_fwd"])
             reduce_func = partial(
-                global_amax_reduction,
-                self.fp8_meta,
-                self.sequence_parallel,
-                self.tp_group,
-                forward=True,
+                global_amax_reduction, self.fp8_meta, self.sequence_parallel, self.tp_group, forward=True,
             )
             setup_amax_forward_global_reduce_func(reduce_func)
 
@@ -421,19 +364,14 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
 
     @staticmethod
     def post_backward(
-        fp8: bool,
-        fp8_meta: Dict[str, Any],
-        reduce_amax_across_tp_group: bool,
-        tp_group: Union[dist_group_type, None],
+        fp8: bool, fp8_meta: Dict[str, Any], reduce_amax_across_tp_group: bool, tp_group: Union[dist_group_type, None],
     ) -> None:
         """Checks and prep for BWD."""
         if not fp8 or not fp8_meta["recipe"].reduce_amax:
             return
 
         if fp8_meta["first_module"]:
-            global_amax_reduction(
-                fp8_meta, reduce_amax_across_tp_group, tp_group, forward=False
-            )
+            global_amax_reduction(fp8_meta, reduce_amax_across_tp_group, tp_group, forward=False)
             delete_key_from_amax_buffer(forward=False)
 
     def set_nccl_overlap_warning_if_tp(self) -> None:
@@ -472,20 +410,13 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         # No-FP8 case: bgrad is fused with wgrad for this case.
         if not ctx.fp8:
             if gather_grad_output:
-                grad_output_mat, _ = gather_along_first_dim(
-                    grad_output_mat, ctx.tp_group
-                )
+                grad_output_mat, _ = gather_along_first_dim(grad_output_mat, ctx.tp_group)
             return grad_output_mat, None, None, None
 
-        fp8_dtype_backward = get_fp8_te_dtype(
-            ctx.fp8_meta["recipe"], fprop_tensor=False
-        )
+        fp8_dtype_backward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=False)
 
         # FP8 case with non-FP8 wgrad
-        if (
-            gather_grad_output
-            and ctx.fp8_meta["recipe"].override_linear_precision.wgrad
-        ):
+        if gather_grad_output and ctx.fp8_meta["recipe"].override_linear_precision.wgrad:
             grad_output_mat, _ = gather_along_first_dim(grad_output_mat, ctx.tp_group)
         # FP8 case with gather: unfused bgrad, cast, transpose for efficient gather
         elif gather_grad_output:
@@ -494,10 +425,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
             else:
                 grad_bias = None
             grad_output_c = cast_to_fp8(
-                grad_output_mat,
-                ctx.fp8_meta["scaling_bwd"],
-                tex.FP8BwdTensors.GRAD_OUTPUT1,
-                fp8_dtype_backward,
+                grad_output_mat, ctx.fp8_meta["scaling_bwd"], tex.FP8BwdTensors.GRAD_OUTPUT1, fp8_dtype_backward,
             )
             grad_output_c, _ = gather_along_first_dim(grad_output_c, ctx.tp_group)
             grad_output_t = tex.fp8_transpose(grad_output_c, fp8_dtype_backward)
@@ -507,25 +435,16 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         # FP8 case without gather: cast, transpose, bgrad fused
         if ctx.use_bias:
             grad_bias, grad_output_c, grad_output_t = fp8_cast_transpose_bgrad_fused(
-                grad_output_mat,
-                ctx.fp8_meta["scaling_bwd"],
-                tex.FP8BwdTensors.GRAD_OUTPUT1,
-                fp8_dtype_backward,
+                grad_output_mat, ctx.fp8_meta["scaling_bwd"], tex.FP8BwdTensors.GRAD_OUTPUT1, fp8_dtype_backward,
             )
         else:
             if not ctx.fp8_meta["recipe"].override_linear_precision.wgrad:
                 grad_output_c, grad_output_t = fp8_cast_transpose_fused(
-                    grad_output_mat,
-                    ctx.fp8_meta["scaling_bwd"],
-                    tex.FP8BwdTensors.GRAD_OUTPUT1,
-                    fp8_dtype_backward,
+                    grad_output_mat, ctx.fp8_meta["scaling_bwd"], tex.FP8BwdTensors.GRAD_OUTPUT1, fp8_dtype_backward,
                 )
             else:
                 grad_output_c = cast_to_fp8(
-                    grad_output_mat,
-                    ctx.fp8_meta["scaling_bwd"],
-                    tex.FP8BwdTensors.GRAD_OUTPUT1,
-                    fp8_dtype_backward,
+                    grad_output_mat, ctx.fp8_meta["scaling_bwd"], tex.FP8BwdTensors.GRAD_OUTPUT1, fp8_dtype_backward,
                 )
                 grad_output_t = None
             grad_bias = None
@@ -594,14 +513,9 @@ class _LayerNormLinear(torch.autograd.Function):
                     fp8_dtype_forward,
                 )
             else:
-                ln_out_return, mu, rsigma = tex.layernorm_fwd(
-                    inputmat, ln_weight, ln_bias, eps
-                )
+                ln_out_return, mu, rsigma = tex.layernorm_fwd(inputmat, ln_weight, ln_bias, eps)
                 ln_out = cast_to_fp8(
-                    ln_out_return,
-                    fp8_meta["scaling_fwd"],
-                    tex.FP8FwdTensors.GEMM1_INPUT,
-                    fp8_dtype_forward,
+                    ln_out_return, fp8_meta["scaling_fwd"], tex.FP8FwdTensors.GEMM1_INPUT, fp8_dtype_forward,
                 )
         else:
             ln_out, mu, rsigma = tex.layernorm_fwd(inputmat, ln_weight, ln_bias, eps)
@@ -614,11 +528,7 @@ class _LayerNormLinear(torch.autograd.Function):
             ln_out_total = ln_out
 
         if fp8:
-            bias_dtype = (
-                torch.bfloat16
-                if activation_dtype == torch.float32
-                else activation_dtype
-            )
+            bias_dtype = torch.bfloat16 if activation_dtype == torch.float32 else activation_dtype
             bias = cast_if_needed(bias, bias_dtype) if use_bias else bias
 
             if update_fp8_weights:
@@ -649,14 +559,7 @@ class _LayerNormLinear(torch.autograd.Function):
             weight = cast_if_needed(weight, activation_dtype)
             bias = cast_if_needed(bias, activation_dtype) if use_bias else bias
 
-            out, _, _ = gemm(
-                weight,
-                ln_out_total,
-                activation_dtype,
-                get_workspace(),
-                bias=bias,
-                use_bias=use_bias,
-            )
+            out, _, _ = gemm(weight, ln_out_total, activation_dtype, get_workspace(), bias=bias, use_bias=use_bias,)
 
         ctx.save_for_backward(
             inputmat,
@@ -696,54 +599,30 @@ class _LayerNormLinear(torch.autograd.Function):
         return out
 
     @staticmethod
-    def backward(
-        ctx, *grad_outputs: Tuple[torch.Tensor, ...]
-    ) -> Tuple[Union[torch.Tensor, None], ...]:
+    def backward(ctx, *grad_outputs: Tuple[torch.Tensor, ...]) -> Tuple[Union[torch.Tensor, None], ...]:
         TransformerEngineBaseModule.pre_backward(ctx.fp8, ctx.fp8_meta)
 
-        (
-            inputmat,
-            ln_weight,
-            mu,
-            rsigma,
-            weight,
-            weight_t_fp8,
-            ln_out,
-            fwd_scale_inverses,
-        ) = ctx.saved_tensors
+        (inputmat, ln_weight, mu, rsigma, weight, weight_t_fp8, ln_out, fwd_scale_inverses,) = ctx.saved_tensors
 
-        (
-            grad_output,
-            grad_output_c,
-            grad_output_t,
-            grad_bias,
-        ) = TransformerEngineBaseModule.grad_output_preprocess(
+        (grad_output, grad_output_c, grad_output_t, grad_bias,) = TransformerEngineBaseModule.grad_output_preprocess(
             ctx, grad_outputs[0], ctx.parallel_mode == "row"
         )
 
         # Column Parallel Linear
         # Overlap input AG with dgrad
         if ctx.parallel_mode == "column" and ctx.sequence_parallel:
-            ln_out_total, handle = gather_along_first_dim(
-                ln_out, ctx.tp_group, async_op=True
-            )
+            ln_out_total, handle = gather_along_first_dim(ln_out, ctx.tp_group, async_op=True)
         else:
             ln_out_total = ln_out
 
         if ctx.is_first_microbatch is not None:
-            accumulate_wgrad_into_param_main_grad = (
-                ctx.fuse_wgrad_accumulation and not ctx.is_first_microbatch
-            )
+            accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation and not ctx.is_first_microbatch
         else:
             accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation
 
         if ctx.fp8:
-            fp8_dtype_forward = get_fp8_te_dtype(
-                ctx.fp8_meta["recipe"], fprop_tensor=True
-            )
-            fp8_dtype_backward = get_fp8_te_dtype(
-                ctx.fp8_meta["recipe"], fprop_tensor=False
-            )
+            fp8_dtype_forward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=True)
+            fp8_dtype_backward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=False)
 
             # DGRAD: Evaluated unconditionally to feed into Linear backward
             dgrad = fp8_gemm(
@@ -759,21 +638,12 @@ class _LayerNormLinear(torch.autograd.Function):
             )
         else:
             # DGRAD: Evaluated unconditionally to feed into Linear backward
-            dgrad, _, _ = gemm(
-                weight,
-                grad_output,
-                ctx.activation_dtype,
-                get_workspace(),
-                layout="NN",
-                grad=True,
-            )
+            dgrad, _, _ = gemm(weight, grad_output, ctx.activation_dtype, get_workspace(), layout="NN", grad=True,)
 
         # Overlap dgrad-RS/AR with wgrad
         if ctx.parallel_mode == "column" and ctx.sequence_parallel:
             handle.wait()
-            dgrad, handle = reduce_scatter_along_first_dim(
-                dgrad, ctx.tp_group, async_op=True
-            )
+            dgrad, handle = reduce_scatter_along_first_dim(dgrad, ctx.tp_group, async_op=True)
         elif ctx.parallel_mode == "column" and ctx.tensor_parallel:
             dgrad, handle = allreduce(dgrad, ctx.tp_group, async_op=True)
 
@@ -787,9 +657,7 @@ class _LayerNormLinear(torch.autograd.Function):
                         fwd_scale_inverses[tex.FP8FwdTensors.GEMM1_INPUT],
                         fp8_dtype_forward,
                         grad_output_t,
-                        ctx.fp8_meta["scaling_bwd"].scale_inv[
-                            tex.FP8BwdTensors.GRAD_OUTPUT1
-                        ],
+                        ctx.fp8_meta["scaling_bwd"].scale_inv[tex.FP8BwdTensors.GRAD_OUTPUT1],
                         fp8_dtype_backward,
                         ctx.activation_dtype,
                         get_workspace(),
@@ -843,16 +711,12 @@ class _LayerNormLinear(torch.autograd.Function):
         if ctx.return_layernorm_output:
             d_ln_out = d_ln_out + grad_outputs[1].view_as(d_ln_out)
 
-        dxmat, dgamma, dbeta = tex.layernorm_bwd(
-            d_ln_out, inputmat, mu, rsigma, ln_weight
-        )
+        dxmat, dgamma, dbeta = tex.layernorm_bwd(d_ln_out, inputmat, mu, rsigma, ln_weight)
 
         if not ctx.use_bias:
             grad_bias = None
 
-        TransformerEngineBaseModule.post_backward(
-            ctx.fp8, ctx.fp8_meta, ctx.sequence_parallel, ctx.tp_group
-        )
+        TransformerEngineBaseModule.post_backward(ctx.fp8, ctx.fp8_meta, ctx.sequence_parallel, ctx.tp_group)
 
         return (
             dxmat.view(ctx.inp_shape),
@@ -973,9 +837,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
         self.set_nccl_overlap_warning_if_tp()
 
         self.parallel_mode = parallel_mode
-        assert (
-            self.parallel_mode in GemmParallelModes
-        ), f"parallel_mode {parallel_mode} not supported"
+        assert self.parallel_mode in GemmParallelModes, f"parallel_mode {parallel_mode} not supported"
 
         if self.parallel_mode == "column":
             self.out_features = divide(self.out_features, self.tp_size)
@@ -989,18 +851,10 @@ class LayerNormLinear(TransformerEngineBaseModule):
 
         self.eps = eps
         self.layer_norm_weight = Parameter(
-            torch.empty(
-                in_features,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(in_features, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         self.layer_norm_bias = Parameter(
-            torch.empty(
-                in_features,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(in_features, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         setattr(self.layer_norm_weight, "sequence_parallel", self.sequence_parallel)
         setattr(self.layer_norm_bias, "sequence_parallel", self.sequence_parallel)
@@ -1009,10 +863,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
         if not skip_weight_param_allocation:
             self.weight = Parameter(
                 torch.empty(
-                    self.out_features,
-                    self.in_features,
-                    device=torch.cuda.current_device(),
-                    dtype=params_dtype,
+                    self.out_features, self.in_features, device=torch.cuda.current_device(), dtype=params_dtype,
                 )
             )
 
@@ -1026,11 +877,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
 
             if self.use_bias or self.return_bias:
                 self.bias = Parameter(
-                    torch.empty(
-                        self.out_features,
-                        device=torch.cuda.current_device(),
-                        dtype=params_dtype,
-                    )
+                    torch.empty(self.out_features, device=torch.cuda.current_device(), dtype=params_dtype,)
                 )
                 if self.parallel_mode == "column":
                     set_tensor_model_parallel_attributes(self.bias, True, 0, 1)
@@ -1174,17 +1021,11 @@ class _Linear(torch.autograd.Function):
 
             if not fp8_meta["recipe"].override_linear_precision.wgrad:
                 inputmat, inputmat_t = fp8_cast_transpose_fused(
-                    inputmat,
-                    fp8_meta["scaling_fwd"],
-                    tex.FP8FwdTensors.GEMM1_INPUT,
-                    fp8_dtype_forward,
+                    inputmat, fp8_meta["scaling_fwd"], tex.FP8FwdTensors.GEMM1_INPUT, fp8_dtype_forward,
                 )
             else:
                 inputmat = cast_to_fp8(
-                    inputmat,
-                    fp8_meta["scaling_fwd"],
-                    tex.FP8FwdTensors.GEMM1_INPUT,
-                    fp8_dtype_forward,
+                    inputmat, fp8_meta["scaling_fwd"], tex.FP8FwdTensors.GEMM1_INPUT, fp8_dtype_forward,
                 )
 
         # Column Parallel Linear
@@ -1194,11 +1035,7 @@ class _Linear(torch.autograd.Function):
             inputmat_total = inputmat
 
         if fp8:
-            bias_dtype = (
-                torch.bfloat16
-                if activation_dtype == torch.float32
-                else activation_dtype
-            )
+            bias_dtype = torch.bfloat16 if activation_dtype == torch.float32 else activation_dtype
             bias = cast_if_needed(bias, bias_dtype) if use_bias else bias
 
             if update_fp8_weights:
@@ -1229,22 +1066,11 @@ class _Linear(torch.autograd.Function):
             weight = cast_if_needed(weight, activation_dtype)
             bias = cast_if_needed(bias, activation_dtype) if use_bias else bias
 
-            out, _, _ = gemm(
-                weight,
-                inputmat_total,
-                activation_dtype,
-                get_workspace(),
-                bias=bias,
-                use_bias=use_bias,
-            )
+            out, _, _ = gemm(weight, inputmat_total, activation_dtype, get_workspace(), bias=bias, use_bias=use_bias,)
 
         ctx.save_for_backward(
-            inputmat_no_fp8
-            if not fp8 or fp8_meta["recipe"].override_linear_precision.wgrad
-            else None,
-            inputmat_t
-            if fp8 and not fp8_meta["recipe"].override_linear_precision.wgrad
-            else None,
+            inputmat_no_fp8 if not fp8 or fp8_meta["recipe"].override_linear_precision.wgrad else None,
+            inputmat_t if fp8 and not fp8_meta["recipe"].override_linear_precision.wgrad else None,
             weight,
             weight_t_fp8,
             fp8_meta["scaling_fwd"].scale_inv.clone() if fp8 else None,
@@ -1271,25 +1097,12 @@ class _Linear(torch.autograd.Function):
         return out.view(-1, *inp.shape[1:-1], out.shape[-1])
 
     @staticmethod
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> Tuple[Union[torch.Tensor, None], ...]:
+    def backward(ctx, grad_output: torch.Tensor) -> Tuple[Union[torch.Tensor, None], ...]:
         TransformerEngineBaseModule.pre_backward(ctx.fp8, ctx.fp8_meta)
 
-        (
-            inputmat,
-            inputmat_t,
-            weight,
-            weight_t_fp8,
-            fwd_scale_inverses,
-        ) = ctx.saved_tensors
+        (inputmat, inputmat_t, weight, weight_t_fp8, fwd_scale_inverses,) = ctx.saved_tensors
 
-        (
-            grad_output,
-            grad_output_c,
-            grad_output_t,
-            grad_bias,
-        ) = TransformerEngineBaseModule.grad_output_preprocess(
+        (grad_output, grad_output_c, grad_output_t, grad_bias,) = TransformerEngineBaseModule.grad_output_preprocess(
             ctx, grad_output, ctx.parallel_mode == "row"
         )
 
@@ -1297,31 +1110,21 @@ class _Linear(torch.autograd.Function):
         # Overlap input AG with dgrad
         if ctx.parallel_mode == "column" and ctx.sequence_parallel:
             if ctx.fp8 and not ctx.fp8_meta["recipe"].override_linear_precision.wgrad:
-                inputmat_t_total, handle = gather_along_last_dim(
-                    inputmat_t, ctx.tp_group, async_op=True
-                )
+                inputmat_t_total, handle = gather_along_last_dim(inputmat_t, ctx.tp_group, async_op=True)
             else:
-                inputmat_total, handle = gather_along_first_dim(
-                    inputmat, ctx.tp_group, async_op=True
-                )
+                inputmat_total, handle = gather_along_first_dim(inputmat, ctx.tp_group, async_op=True)
         else:
             inputmat_t_total = inputmat_t
             inputmat_total = inputmat
 
         if ctx.is_first_microbatch is not None:
-            accumulate_wgrad_into_param_main_grad = (
-                ctx.fuse_wgrad_accumulation and not ctx.is_first_microbatch
-            )
+            accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation and not ctx.is_first_microbatch
         else:
             accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation
 
         if ctx.fp8:
-            fp8_dtype_forward = get_fp8_te_dtype(
-                ctx.fp8_meta["recipe"], fprop_tensor=True
-            )
-            fp8_dtype_backward = get_fp8_te_dtype(
-                ctx.fp8_meta["recipe"], fprop_tensor=False
-            )
+            fp8_dtype_forward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=True)
+            fp8_dtype_backward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=False)
 
             # DGRAD
             dgrad = fp8_gemm(
@@ -1337,21 +1140,12 @@ class _Linear(torch.autograd.Function):
             )
         else:
             # DGRAD
-            dgrad, _, _ = gemm(
-                weight,
-                grad_output,
-                ctx.activation_dtype,
-                get_workspace(),
-                layout="NN",
-                grad=True,
-            )
+            dgrad, _, _ = gemm(weight, grad_output, ctx.activation_dtype, get_workspace(), layout="NN", grad=True,)
 
         # Overlap dgrad-RS/AR with wgrad
         if ctx.parallel_mode == "column" and ctx.sequence_parallel:
             handle.wait()
-            dgrad, handle = reduce_scatter_along_first_dim(
-                dgrad, ctx.tp_group, async_op=True
-            )
+            dgrad, handle = reduce_scatter_along_first_dim(dgrad, ctx.tp_group, async_op=True)
         elif ctx.parallel_mode == "column" and ctx.tensor_parallel:
             dgrad, handle = allreduce(dgrad, ctx.tp_group, async_op=True)
 
@@ -1364,9 +1158,7 @@ class _Linear(torch.autograd.Function):
                         fwd_scale_inverses[tex.FP8FwdTensors.GEMM1_INPUT],
                         fp8_dtype_forward,
                         grad_output_t,
-                        ctx.fp8_meta["scaling_bwd"].scale_inv[
-                            tex.FP8BwdTensors.GRAD_OUTPUT1
-                        ],
+                        ctx.fp8_meta["scaling_bwd"].scale_inv[tex.FP8BwdTensors.GRAD_OUTPUT1],
                         fp8_dtype_backward,
                         ctx.activation_dtype,
                         get_workspace(),
@@ -1409,9 +1201,7 @@ class _Linear(torch.autograd.Function):
         if not ctx.use_bias:
             grad_bias = None
 
-        TransformerEngineBaseModule.post_backward(
-            ctx.fp8, ctx.fp8_meta, ctx.sequence_parallel, ctx.tp_group
-        )
+        TransformerEngineBaseModule.post_backward(ctx.fp8, ctx.fp8_meta, ctx.sequence_parallel, ctx.tp_group)
 
         return (
             wgrad if weight.requires_grad else None,
@@ -1523,9 +1313,7 @@ class Linear(TransformerEngineBaseModule):
         self.set_nccl_overlap_warning_if_tp()
 
         self.parallel_mode = parallel_mode
-        assert (
-            self.parallel_mode in GemmParallelModes
-        ), f"parallel_mode {parallel_mode} not supported"
+        assert self.parallel_mode in GemmParallelModes, f"parallel_mode {parallel_mode} not supported"
 
         if self.parallel_mode == "column":
             self.out_features = divide(self.out_features, self.tp_size)
@@ -1540,10 +1328,7 @@ class Linear(TransformerEngineBaseModule):
         if not skip_weight_param_allocation:
             self.weight = Parameter(
                 torch.empty(
-                    self.out_features,
-                    self.in_features,
-                    device=torch.cuda.current_device(),
-                    dtype=params_dtype,
+                    self.out_features, self.in_features, device=torch.cuda.current_device(), dtype=params_dtype,
                 )
             )
 
@@ -1557,11 +1342,7 @@ class Linear(TransformerEngineBaseModule):
 
             if self.use_bias or self.return_bias:
                 self.bias = Parameter(
-                    torch.empty(
-                        self.out_features,
-                        device=torch.cuda.current_device(),
-                        dtype=params_dtype,
-                    )
+                    torch.empty(self.out_features, device=torch.cuda.current_device(), dtype=params_dtype,)
                 )
                 if self.parallel_mode == "column":
                     set_tensor_model_parallel_attributes(self.bias, True, 0, 1)
@@ -1710,14 +1491,9 @@ class _LayerNormMLP(torch.autograd.Function):
                     fp8_dtype_forward,
                 )
             else:
-                ln_out_return, mu, rsigma = tex.layernorm_fwd(
-                    inputmat, ln_weight, ln_bias, eps
-                )
+                ln_out_return, mu, rsigma = tex.layernorm_fwd(inputmat, ln_weight, ln_bias, eps)
                 ln_out = cast_to_fp8(
-                    ln_out_return,
-                    fp8_meta["scaling_fwd"],
-                    tex.FP8FwdTensors.GEMM1_INPUT,
-                    fp8_dtype_forward,
+                    ln_out_return, fp8_meta["scaling_fwd"], tex.FP8FwdTensors.GEMM1_INPUT, fp8_dtype_forward,
                 )
         else:
             ln_out, mu, rsigma = tex.layernorm_fwd(inputmat, ln_weight, ln_bias, eps)
@@ -1730,11 +1506,7 @@ class _LayerNormMLP(torch.autograd.Function):
             ln_out_total = ln_out
 
         if fp8:
-            bias_dtype = (
-                torch.bfloat16
-                if activation_dtype == torch.float32
-                else activation_dtype
-            )
+            bias_dtype = torch.bfloat16 if activation_dtype == torch.float32 else activation_dtype
             fc1_bias = cast_if_needed(fc1_bias, bias_dtype)
             fc2_bias = cast_if_needed(fc2_bias, bias_dtype) if use_bias else fc2_bias
 
@@ -1771,12 +1543,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 use_split_accumulator=_2X_ACC_FPROP,
             )
 
-            gelu_out = fp8_gelu(
-                fc1_out,
-                fp8_meta["scaling_fwd"],
-                tex.FP8FwdTensors.GEMM2_INPUT,
-                fp8_dtype_forward,
-            )
+            gelu_out = fp8_gelu(fc1_out, fp8_meta["scaling_fwd"], tex.FP8FwdTensors.GEMM2_INPUT, fp8_dtype_forward,)
 
             fc2_out = fp8_gemm(
                 fc2_weight_fp8,
@@ -1796,9 +1563,7 @@ class _LayerNormMLP(torch.autograd.Function):
             fc1_weight = cast_if_needed(fc1_weight, activation_dtype)
             fc2_weight = cast_if_needed(fc2_weight, activation_dtype)
             fc1_bias = cast_if_needed(fc1_bias, activation_dtype)
-            fc2_bias = (
-                cast_if_needed(fc2_bias, activation_dtype) if use_bias else fc2_bias
-            )
+            fc2_bias = cast_if_needed(fc2_bias, activation_dtype) if use_bias else fc2_bias
 
             fc1_outputs = gemm(
                 fc1_weight,
@@ -1817,12 +1582,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 gelu_out, _, fc1_out = fc1_outputs
 
             fc2_out, _, _ = gemm(
-                fc2_weight,
-                gelu_out,
-                activation_dtype,
-                get_workspace(),
-                bias=fc2_bias,
-                use_bias=use_bias,
+                fc2_weight, gelu_out, activation_dtype, get_workspace(), bias=fc2_bias, use_bias=use_bias,
             )
 
         ctx.save_for_backward(
@@ -1868,9 +1628,7 @@ class _LayerNormMLP(torch.autograd.Function):
         return fc2_out
 
     @staticmethod
-    def backward(
-        ctx, *grad_outputs: Tuple[torch.Tensor, ...]
-    ) -> Tuple[Union[torch.Tensor, None], ...]:
+    def backward(ctx, *grad_outputs: Tuple[torch.Tensor, ...]) -> Tuple[Union[torch.Tensor, None], ...]:
         TransformerEngineBaseModule.pre_backward(ctx.fp8, ctx.fp8_meta)
 
         (
@@ -1894,33 +1652,23 @@ class _LayerNormMLP(torch.autograd.Function):
             grad_output_c,
             grad_output_t,
             fc2_bias_grad,
-        ) = TransformerEngineBaseModule.grad_output_preprocess(
-            ctx, grad_outputs[0], True
-        )
+        ) = TransformerEngineBaseModule.grad_output_preprocess(ctx, grad_outputs[0], True)
 
         # Column Parallel Linear
         # Overlap input AG with dgrad
         if ctx.set_parallel_mode and ctx.sequence_parallel:
-            ln_out_total, handle = gather_along_first_dim(
-                ln_out, ctx.tp_group, async_op=True
-            )
+            ln_out_total, handle = gather_along_first_dim(ln_out, ctx.tp_group, async_op=True)
         else:
             ln_out_total = ln_out
 
         if ctx.is_first_microbatch is not None:
-            accumulate_wgrad_into_param_main_grad = (
-                ctx.fuse_wgrad_accumulation and not ctx.is_first_microbatch
-            )
+            accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation and not ctx.is_first_microbatch
         else:
             accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation
 
         if ctx.fp8:
-            fp8_dtype_forward = get_fp8_te_dtype(
-                ctx.fp8_meta["recipe"], fprop_tensor=True
-            )
-            fp8_dtype_backward = get_fp8_te_dtype(
-                ctx.fp8_meta["recipe"], fprop_tensor=False
-            )
+            fp8_dtype_forward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=True)
+            fp8_dtype_backward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=False)
 
             # FC2 DGRAD; Unconditional
             fc2_dgrad = fp8_gemm(
@@ -1944,17 +1692,13 @@ class _LayerNormMLP(torch.autograd.Function):
                         fwd_scale_inverses[tex.FP8FwdTensors.GEMM2_INPUT],
                         fp8_dtype_forward,
                         grad_output_t,
-                        ctx.fp8_meta["scaling_bwd"].scale_inv[
-                            tex.FP8BwdTensors.GRAD_OUTPUT1
-                        ],
+                        ctx.fp8_meta["scaling_bwd"].scale_inv[tex.FP8BwdTensors.GRAD_OUTPUT1],
                         fp8_dtype_backward,
                         ctx.activation_dtype,
                         get_workspace(),
                         accumulate=accumulate_wgrad_into_param_main_grad,
                         fp32_output=ctx.fuse_wgrad_accumulation,
-                        out=fc2_weight.main_grad
-                        if ctx.fuse_wgrad_accumulation
-                        else None,
+                        out=fc2_weight.main_grad if ctx.fuse_wgrad_accumulation else None,
                         use_split_accumulator=_2X_ACC_WGRAD,
                     )
 
@@ -1984,20 +1728,13 @@ class _LayerNormMLP(torch.autograd.Function):
                         use_bias=ctx.use_bias,
                         accumulate=accumulate_wgrad_into_param_main_grad,
                         fp32_output=ctx.fuse_wgrad_accumulation,
-                        out=fc2_weight.main_grad
-                        if ctx.fuse_wgrad_accumulation
-                        else None,
+                        out=fc2_weight.main_grad if ctx.fuse_wgrad_accumulation else None,
                     )
 
-                fc1_bias_grad, dgelu_no_fp8 = bgrad_dgelu_fused(
-                    fc2_dgrad, fc1_out, fc1_bias
-                )
+                fc1_bias_grad, dgelu_no_fp8 = bgrad_dgelu_fused(fc2_dgrad, fc1_out, fc1_bias)
 
                 dgelu = cast_to_fp8(
-                    dgelu_no_fp8,
-                    ctx.fp8_meta["scaling_bwd"],
-                    tex.FP8BwdTensors.GRAD_OUTPUT2,
-                    fp8_dtype_backward,
+                    dgelu_no_fp8, ctx.fp8_meta["scaling_bwd"], tex.FP8BwdTensors.GRAD_OUTPUT2, fp8_dtype_backward,
                 )
                 dgelu_t = None
 
@@ -2047,21 +1784,12 @@ class _LayerNormMLP(torch.autograd.Function):
                 dgelu = fc2_dgrad
 
             # FC1 DGRAD: Unconditional
-            fc1_dgrad, _, _ = gemm(
-                fc1_weight,
-                dgelu,
-                ctx.activation_dtype,
-                get_workspace(),
-                layout="NN",
-                grad=True,
-            )
+            fc1_dgrad, _, _ = gemm(fc1_weight, dgelu, ctx.activation_dtype, get_workspace(), layout="NN", grad=True,)
 
         # Overlap dgrad-RS/AR with wgrad
         if ctx.set_parallel_mode and ctx.sequence_parallel:
             handle.wait()
-            fc1_dgrad, handle = reduce_scatter_along_first_dim(
-                fc1_dgrad, ctx.tp_group, async_op=True
-            )
+            fc1_dgrad, handle = reduce_scatter_along_first_dim(fc1_dgrad, ctx.tp_group, async_op=True)
         elif ctx.set_parallel_mode and ctx.tensor_parallel:
             fc1_dgrad, handle = allreduce(fc1_dgrad, ctx.tp_group, async_op=True)
 
@@ -2075,17 +1803,13 @@ class _LayerNormMLP(torch.autograd.Function):
                         fwd_scale_inverses[tex.FP8FwdTensors.GEMM1_INPUT],
                         fp8_dtype_forward,
                         dgelu_t,
-                        ctx.fp8_meta["scaling_bwd"].scale_inv[
-                            tex.FP8BwdTensors.GRAD_OUTPUT2
-                        ],
+                        ctx.fp8_meta["scaling_bwd"].scale_inv[tex.FP8BwdTensors.GRAD_OUTPUT2],
                         fp8_dtype_backward,
                         ctx.activation_dtype,
                         get_workspace(),
                         accumulate=accumulate_wgrad_into_param_main_grad,
                         fp32_output=ctx.fuse_wgrad_accumulation,
-                        out=fc1_weight.main_grad
-                        if ctx.fuse_wgrad_accumulation
-                        else None,
+                        out=fc1_weight.main_grad if ctx.fuse_wgrad_accumulation else None,
                         use_split_accumulator=_2X_ACC_WGRAD,
                     )
                 else:
@@ -2105,9 +1829,7 @@ class _LayerNormMLP(torch.autograd.Function):
                         grad=True,
                         accumulate=accumulate_wgrad_into_param_main_grad,
                         fp32_output=ctx.fuse_wgrad_accumulation,
-                        out=fc1_weight.main_grad
-                        if ctx.fuse_wgrad_accumulation
-                        else None,
+                        out=fc1_weight.main_grad if ctx.fuse_wgrad_accumulation else None,
                     )
             else:
                 # FC1 WGRAD
@@ -2140,16 +1862,12 @@ class _LayerNormMLP(torch.autograd.Function):
         if ctx.return_layernorm_output:
             d_ln_out = d_ln_out + grad_outputs[1].view_as(d_ln_out)
 
-        dxmat, dgamma, dbeta = tex.layernorm_bwd(
-            d_ln_out, inputmat, mu, rsigma, ln_weight
-        )
+        dxmat, dgamma, dbeta = tex.layernorm_bwd(d_ln_out, inputmat, mu, rsigma, ln_weight)
 
         if not ctx.use_bias:
             fc2_bias_grad = None
 
-        TransformerEngineBaseModule.post_backward(
-            ctx.fp8, ctx.fp8_meta, ctx.sequence_parallel, ctx.tp_group
-        )
+        TransformerEngineBaseModule.post_backward(ctx.fp8, ctx.fp8_meta, ctx.sequence_parallel, ctx.tp_group)
 
         return (
             dxmat.view(ctx.inp_shape),
@@ -2296,18 +2014,10 @@ class LayerNormMLP(TransformerEngineBaseModule):
         # LN init
         self.eps = eps
         self.layer_norm_weight = Parameter(
-            torch.empty(
-                hidden_size,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(hidden_size, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         self.layer_norm_bias = Parameter(
-            torch.empty(
-                hidden_size,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(hidden_size, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         setattr(self.layer_norm_weight, "sequence_parallel", self.sequence_parallel)
         setattr(self.layer_norm_bias, "sequence_parallel", self.sequence_parallel)
@@ -2315,29 +2025,16 @@ class LayerNormMLP(TransformerEngineBaseModule):
 
         # FC1 init
         self.fc1_weight = Parameter(
-            torch.empty(
-                self.size_per_partition,
-                hidden_size,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(self.size_per_partition, hidden_size, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         self.fp8_weight_shapes.append(self.fc1_weight.shape)
 
         initialize_affine_weight_gpu(
-            self.fc1_weight,
-            init_method,
-            get_rng_state_tracker,
-            partition_dim=0,
-            stride=1,
+            self.fc1_weight, init_method, get_rng_state_tracker, partition_dim=0, stride=1,
         )
 
         self.fc1_bias = Parameter(
-            torch.empty(
-                self.size_per_partition,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(self.size_per_partition, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         set_tensor_model_parallel_attributes(self.fc1_bias, True, 0, 1)
 
@@ -2346,29 +2043,16 @@ class LayerNormMLP(TransformerEngineBaseModule):
 
         # FC2 init
         self.fc2_weight = Parameter(
-            torch.empty(
-                hidden_size,
-                self.size_per_partition,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(hidden_size, self.size_per_partition, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         self.fp8_weight_shapes.append(self.fc2_weight.shape)
 
         initialize_affine_weight_gpu(
-            self.fc2_weight,
-            output_layer_init_method,
-            get_rng_state_tracker,
-            partition_dim=1,
-            stride=1,
+            self.fc2_weight, output_layer_init_method, get_rng_state_tracker, partition_dim=1, stride=1,
         )
 
         if self.use_bias or self.return_bias:
-            self.fc2_bias = Parameter(
-                torch.empty(
-                    hidden_size, device=torch.cuda.current_device(), dtype=params_dtype
-                )
-            )
+            self.fc2_bias = Parameter(torch.empty(hidden_size, device=torch.cuda.current_device(), dtype=params_dtype))
         else:
             self.register_buffer("fc2_bias", torch.Tensor(), persistent=False)
 
@@ -2386,9 +2070,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
         if self.bias_gelu_nvfusion:
             set_jit_fusion_options()
             if seq_length and micro_batch_size:
-                warmup_jit_bias_gelu_all_dtypes(
-                    self.size_per_partition, seq_length, micro_batch_size
-                )
+                warmup_jit_bias_gelu_all_dtypes(self.size_per_partition, seq_length, micro_batch_size)
 
     def reset_layer_norm_parameters(self) -> None:
         """Init LN params"""
@@ -2470,13 +2152,7 @@ class _LayerNorm(torch.autograd.Function):
     """functional LayerNorm"""
 
     @staticmethod
-    def forward(
-        ctx,
-        inp: torch.Tensor,
-        ln_weight: torch.Tensor,
-        ln_bias: torch.Tensor,
-        eps: float,
-    ) -> torch.Tensor:
+    def forward(ctx, inp: torch.Tensor, ln_weight: torch.Tensor, ln_bias: torch.Tensor, eps: float,) -> torch.Tensor:
         # Make sure input dimensions are compatible
         in_features = ln_weight.numel()
         assert inp.is_cuda, "TransformerEngine needs CUDA."
@@ -2489,15 +2165,11 @@ class _LayerNorm(torch.autograd.Function):
         return ln_out.view_as(inp)
 
     @staticmethod
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> Tuple[Union[torch.Tensor, None], ...]:
+    def backward(ctx, grad_output: torch.Tensor) -> Tuple[Union[torch.Tensor, None], ...]:
         inputmat, ln_weight, mu, rsigma = ctx.saved_tensors
         grad_output = grad_output.contiguous()
         d_ln_out = grad_output.view(inputmat.shape)
-        dxmat, dgamma, dbeta = tex.layernorm_bwd(
-            d_ln_out, inputmat, mu, rsigma, ln_weight
-        )
+        dxmat, dgamma, dbeta = tex.layernorm_bwd(d_ln_out, inputmat, mu, rsigma, ln_weight)
         return dxmat.view(ctx.inp_shape), dgamma, dbeta, None
 
 
@@ -2536,18 +2208,10 @@ class LayerNorm(torch.nn.Module):
         super().__init__()
         self.eps = eps
         self.layer_norm_weight = Parameter(
-            torch.empty(
-                hidden_size,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(hidden_size, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         self.layer_norm_bias = Parameter(
-            torch.empty(
-                hidden_size,
-                device=torch.cuda.current_device(),
-                dtype=params_dtype,
-            )
+            torch.empty(hidden_size, device=torch.cuda.current_device(), dtype=params_dtype,)
         )
         setattr(self.layer_norm_weight, "sequence_parallel", sequence_parallel)
         setattr(self.layer_norm_bias, "sequence_parallel", sequence_parallel)
@@ -2560,6 +2224,4 @@ class LayerNorm(torch.nn.Module):
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         """LayerNorm FWD"""
-        return _LayerNorm.apply(
-            inp, self.layer_norm_weight, self.layer_norm_bias, self.eps
-        )
+        return _LayerNorm.apply(inp, self.layer_norm_weight, self.layer_norm_bias, self.eps)

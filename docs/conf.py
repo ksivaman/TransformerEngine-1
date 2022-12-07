@@ -36,7 +36,12 @@ git_sha = os.getenv("GIT_SHA")
 
 if not git_sha:
     try:
-        git_sha = subprocess.check_output(["git", "log", "--pretty=format:'%h'", "-n1"]).decode('ascii').replace("'","").strip()
+        git_sha = (
+            subprocess.check_output(["git", "log", "--pretty=format:'%h'", "-n1"])
+            .decode('ascii')
+            .replace("'", "")
+            .strip()
+        )
     except:
         git_sha = u'0000000'
 
@@ -51,21 +56,21 @@ option_on = " selected"
 option_off = ""
 release_opt = option_on
 option_nr = 0
-version = version + """<br/>
+version = (
+    version
+    + """<br/>
 Version select: <select onChange="window.location.href = this.value" onFocus="this.selectedIndex = {0}">
     <option value="https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/index.html"{1}>Current release</option>
     <option value="https://docs.nvidia.com/deeplearning/transformer-engine/archives/index.html">Older releases</option>
-</select>""".format(option_nr, release_opt)
+</select>""".format(
+        option_nr, release_opt
+    )
+)
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = [
-        'sphinx.ext.autodoc',
-        'sphinx.ext.mathjax',
-        'sphinx.ext.napoleon',
-        'nbsphinx',
-        'breathe']
+extensions = ['sphinx.ext.autodoc', 'sphinx.ext.mathjax', 'sphinx.ext.napoleon', 'nbsphinx', 'breathe']
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
@@ -77,7 +82,6 @@ master_doc = 'index'
 pygments_style = 'sphinx'
 
 
-
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
@@ -85,15 +89,13 @@ html_theme = 'sphinx_rtd_theme'
 html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 html_static_path = ['_static']
 
-html_theme_options = {
-        'display_version': True,
-        'collapse_navigation': False,
-        'logo_only': False
-}
+html_theme_options = {'display_version': True, 'collapse_navigation': False, 'logo_only': False}
 
-napoleon_custom_sections = [('Parallelism parameters', 'params_style'),
-                            ('Optimization parameters', 'params_style'),
-                            ('Values', 'params_style')]
+napoleon_custom_sections = [
+    ('Parallelism parameters', 'params_style'),
+    ('Optimization parameters', 'params_style'),
+    ('Values', 'params_style'),
+]
 
 breathe_projects = {"TransformerEngine": os.path.abspath("doxygen/xml/")}
 breathe_default_project = "TransformerEngine"

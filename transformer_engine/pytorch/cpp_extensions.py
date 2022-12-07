@@ -4,8 +4,10 @@
 
 """TE FP8 extensions and GEMMs"""
 from typing import Optional, Tuple, Union
+
 import torch
 import transformer_engine_extensions as tex
+
 from .constants import TE_DType
 
 
@@ -31,12 +33,7 @@ def fp8_gemm(
 
     return_output = False
     if out is None:
-        out = torch.empty(
-            B.shape[0],
-            A.shape[0],
-            dtype=torch.float32 if fp32_output else out_dtype,
-            device="cuda",
-        )
+        out = torch.empty(B.shape[0], A.shape[0], dtype=torch.float32 if fp32_output else out_dtype, device="cuda",)
         return_output = True
 
     out_dtype = tex.DType.kFloat32 if fp32_output else TE_DType[out_dtype]
@@ -107,9 +104,7 @@ def gemm(
         gelu_input = empty_tensor
 
     if grad and use_bias:
-        grad_bias = torch.empty(
-            B.shape[1], dtype=torch.float32 if fp32_output else dtype, device="cuda"
-        )
+        grad_bias = torch.empty(B.shape[1], dtype=torch.float32 if fp32_output else dtype, device="cuda")
     else:
         grad_bias = empty_tensor
 
@@ -153,9 +148,7 @@ def fp8_cast_transpose_fused(
     return_outputs = False
     if cast_out is None or transpose_out is None:
         cast_out = torch.empty_like(inp, dtype=torch.int8)
-        transpose_out = torch.empty(
-            inp.shape[1], inp.shape[0], device="cuda", dtype=torch.int8
-        )
+        transpose_out = torch.empty(inp.shape[1], inp.shape[0], device="cuda", dtype=torch.int8)
         return_outputs = True
 
     tex.fused_cast_transpose(
@@ -269,9 +262,4 @@ def cast_from_fp8(
     otype: tex.DType,
 ) -> torch.Tensor:
     """Cast input from FP8"""
-    return tex.cast_from_fp8(
-        inp,
-        fp8_meta_tensor.scale_inv[fp8_tensor],
-        itype,
-        otype,
-    )
+    return tex.cast_from_fp8(inp, fp8_meta_tensor.scale_inv[fp8_tensor], itype, otype,)

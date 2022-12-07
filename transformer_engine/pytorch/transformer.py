@@ -3,41 +3,35 @@
 # See LICENSE for license information.
 
 """Transformer."""
-import os
 import math
+import os
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Tuple, Union
 
 import torch
 from torch.nn.parameter import Parameter
-
-from transformer_engine.pytorch import LayerNormLinear, Linear, LayerNormMLP, LayerNorm
-from transformer_engine.pytorch.jit import (
-    set_jit_fusion_options,
-    warmup_jit_bias_dropout_add_all_dtypes,
-    get_bias_dropout_add,
-    bias_dropout_add_fused_train,
-    bias_dropout_add_fused_inference,
-)
-from transformer_engine.pytorch.utils import (
-    divide,
-    attention_mask_func,
-    split_tensor_along_last_dim,
-    cast_if_needed,
-    get_default_init_method,
-)
-from transformer_engine.pytorch.constants import (
-    AttnMaskTypes,
-    AttnTypes,
-    LayerTypes,
-    dist_group_type,
-)
-from transformer_engine.pytorch.softmax import FusedScaleMaskSoftmax
+from transformer_engine.pytorch import LayerNorm, LayerNormLinear, LayerNormMLP, Linear
+from transformer_engine.pytorch.constants import AttnMaskTypes, AttnTypes, LayerTypes, dist_group_type
 from transformer_engine.pytorch.distributed import (
-    get_distributed_world_size,
     checkpoint,
+    get_distributed_world_size,
     initialize_affine_weight_gpu,
     set_tensor_model_parallel_attributes,
+)
+from transformer_engine.pytorch.jit import (
+    bias_dropout_add_fused_inference,
+    bias_dropout_add_fused_train,
+    get_bias_dropout_add,
+    set_jit_fusion_options,
+    warmup_jit_bias_dropout_add_all_dtypes,
+)
+from transformer_engine.pytorch.softmax import FusedScaleMaskSoftmax
+from transformer_engine.pytorch.utils import (
+    attention_mask_func,
+    cast_if_needed,
+    divide,
+    get_default_init_method,
+    split_tensor_along_last_dim,
 )
 
 
@@ -58,9 +52,7 @@ class DropPath(torch.nn.Module):
         keep_prob = 1 - self.drop_prob
         # work with diff dim tensors, not just 2D ConvNets
         shape = (hidden_state.shape[0],) + (1,) * (hidden_state.ndim - 1)
-        random_tensor = keep_prob + torch.rand(
-            shape, dtype=hidden_state.dtype, device=hidden_state.device
-        )
+        random_tensor = keep_prob + torch.rand(shape, dtype=hidden_state.dtype, device=hidden_state.device)
         random_tensor.floor_()  # binarize
         output = hidden_state.div(keep_prob) * random_tensor
         return output
@@ -99,15 +91,11 @@ class CoreAttention(torch.nn.Module):
 
         self.attn_mask_type = attn_mask_type
         projection_size = kv_channels * num_attention_heads
-        assert (
-            attn_mask_type in AttnMaskTypes
-        ), f"attn_mask_type {attn_mask_type} not supported"
+        assert attn_mask_type in AttnMaskTypes, f"attn_mask_type {attn_mask_type} not supported"
 
         # Per attention head and per partition values.
         self.hidden_size_per_partition = divide(projection_size, tp_size)
-        self.hidden_size_per_attention_head = divide(
-            projection_size, num_attention_heads
-        )
+        self.hidden_size_per_attention_head = divide(projection_size, num_attention_heads)
 
         self.sequence_parallel = sequence_parallel
         if self.sequence_parallel or get_rng_state_tracker is None:
@@ -122,10 +110,7 @@ class CoreAttention(torch.nn.Module):
             self.norm_factor *= coeff
 
         self.scale_mask_softmax = FusedScaleMaskSoftmax(
-            self.attn_mask_type,
-            attention_mask_func,
-            self.attention_softmax_in_fp32,
-            coeff,
+            self.attn_mask_type, attention_mask_func, self.attention_softmax_in_fp32, coeff,
         )
 
         # Dropout. Note that for a single iteration, this layer will generate
@@ -150,9 +135,7 @@ class CoreAttention(torch.nn.Module):
         )
 
         # [sq, b, np, hn] -> [sq, b * np, hn]
-        query_layer = query_layer.view(
-            output_size[2], output_size[0] * output_size[1], -1
-        )
+        query_layer = query_layer.view(output_size[2], output_size[0] * output_size[1], -1)
         # [sk, b, np, hn] -> [sk, b * np, hn]
         key_layer = key_layer.view(output_size[3], output_size[0] * output_size[1], -1)
 
@@ -195,14 +178,10 @@ class CoreAttention(torch.nn.Module):
         )
 
         # change view [sk, b * np, hn]
-        value_layer = value_layer.view(
-            value_layer.size(0), output_size[0] * output_size[1], -1
-        )
+        value_layer = value_layer.view(value_layer.size(0), output_size[0] * output_size[1], -1)
 
         # change view [b * np, sq, sk]
-        attention_probs = attention_probs.view(
-            output_size[0] * output_size[1], output_size[2], -1
-        )
+        attention_probs = attention_probs.view(output_size[0] * output_size[1], output_size[2], -1)
 
         # matmul: [b * np, sq, hn]
         context_layer = torch.bmm(attention_probs, value_layer.transpose(0, 1))
@@ -214,9 +193,7 @@ class CoreAttention(torch.nn.Module):
         context_layer = context_layer.permute(2, 0, 1, 3).contiguous()
 
         # [sq, b, np, hn] --> [sq, b, hp]
-        new_context_layer_shape = context_layer.size()[:-2] + (
-            self.hidden_size_per_partition,
-        )
+        new_context_layer_shape = context_layer.size()[:-2] + (self.hidden_size_per_partition,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
         return context_layer
@@ -263,9 +240,7 @@ class MultiHeadAttention(torch.nn.Module):
         self.init_method = init_method
         self.fuse_qkv_params = fuse_qkv_params
 
-        assert (
-            attention_type in AttnTypes
-        ), f"attention_type {attention_type} not supported"
+        assert attention_type in AttnTypes, f"attention_type {attention_type} not supported"
 
         tp_size = tp_size if tp_group is None else get_distributed_world_size(tp_group)
         self.tp_size = tp_size
@@ -286,10 +261,7 @@ class MultiHeadAttention(torch.nn.Module):
         qkv_parallel_mode = "column" if set_parallel_mode else None
         if not fuse_qkv_params:
             self.set_qkv_params(
-                hidden_size,
-                3 * hidden_size,
-                parallel_mode=qkv_parallel_mode,
-                bias=True,
+                hidden_size, 3 * hidden_size, parallel_mode=qkv_parallel_mode, bias=True,
             )
 
         if self.attention_type == "self":
@@ -392,15 +364,10 @@ class MultiHeadAttention(torch.nn.Module):
         elif parallel_mode == "row":
             in_features = divide(in_features, self.tp_size)
 
-        assert (
-            out_features % 3 == 0
-        ), f"3 way QKV split with dimension {out_features} not possible."
+        assert out_features % 3 == 0, f"3 way QKV split with dimension {out_features} not possible."
 
         weight_tensor = torch.empty(
-            out_features,
-            in_features,
-            device=torch.cuda.current_device(),
-            dtype=self.params_dtype,
+            out_features, in_features, device=torch.cuda.current_device(), dtype=self.params_dtype,
         )
 
         initialize_affine_weight_gpu(
@@ -416,35 +383,20 @@ class MultiHeadAttention(torch.nn.Module):
         self.key = Parameter(weight_tensor[qkv_first_dim : 2 * qkv_first_dim, :])
         self.value = Parameter(weight_tensor[2 * qkv_first_dim : 3 * qkv_first_dim, :])
         set_tensor_model_parallel_attributes(
-            tensor=self.query,
-            is_parallel=True,
-            dim=1 if parallel_mode == "row" else 0,
-            stride=1,
+            tensor=self.query, is_parallel=True, dim=1 if parallel_mode == "row" else 0, stride=1,
         )
         set_tensor_model_parallel_attributes(
-            tensor=self.key,
-            is_parallel=True,
-            dim=1 if parallel_mode == "row" else 0,
-            stride=1,
+            tensor=self.key, is_parallel=True, dim=1 if parallel_mode == "row" else 0, stride=1,
         )
         set_tensor_model_parallel_attributes(
-            tensor=self.value,
-            is_parallel=True,
-            dim=1 if parallel_mode == "row" else 0,
-            stride=1,
+            tensor=self.value, is_parallel=True, dim=1 if parallel_mode == "row" else 0, stride=1,
         )
 
         if bias:
-            bias_tensor = torch.empty(
-                out_features,
-                device=torch.cuda.current_device(),
-                dtype=self.params_dtype,
-            )
+            bias_tensor = torch.empty(out_features, device=torch.cuda.current_device(), dtype=self.params_dtype,)
             self.query_bias = Parameter(bias_tensor[0:qkv_first_dim])
             self.key_bias = Parameter(bias_tensor[qkv_first_dim : 2 * qkv_first_dim])
-            self.value_bias = Parameter(
-                bias_tensor[2 * qkv_first_dim : 3 * qkv_first_dim]
-            )
+            self.value_bias = Parameter(bias_tensor[2 * qkv_first_dim : 3 * qkv_first_dim])
 
             if parallel_mode == "column":
                 set_tensor_model_parallel_attributes(self.query_bias, True, 0, 1)
@@ -474,9 +426,7 @@ class MultiHeadAttention(torch.nn.Module):
             key_layer = inputs[1]
             value_layer = inputs[2]
             attention_mask = inputs[3]
-            output_ = self.core_attention(
-                query_layer, key_layer, value_layer, attention_mask
-            )
+            output_ = self.core_attention(query_layer, key_layer, value_layer, attention_mask)
             return output_
 
         hidden_states = checkpoint(
@@ -492,9 +442,7 @@ class MultiHeadAttention(torch.nn.Module):
 
         return hidden_states
 
-    def _allocate_memory(
-        self, inference_max_sequence_len: int, batch_size: int
-    ) -> torch.Tensor:
+    def _allocate_memory(self, inference_max_sequence_len: int, batch_size: int) -> torch.Tensor:
         return torch.empty(
             inference_max_sequence_len,
             batch_size,
@@ -528,45 +476,31 @@ class MultiHeadAttention(torch.nn.Module):
             if self.layer_number not in inference_params.key_value_memory_dict:
                 inf_max_seq_len = inference_params.max_sequence_len
                 inf_max_batch_size = inference_params.max_batch_size
-                inference_key_memory = self._allocate_memory(
-                    inf_max_seq_len, inf_max_batch_size
-                )
-                inference_value_memory = self._allocate_memory(
-                    inf_max_seq_len, inf_max_batch_size
-                )
+                inference_key_memory = self._allocate_memory(inf_max_seq_len, inf_max_batch_size)
+                inference_value_memory = self._allocate_memory(inf_max_seq_len, inf_max_batch_size)
                 inference_params.key_value_memory_dict[self.layer_number] = (
                     inference_key_memory,
                     inference_value_memory,
                 )
             else:
-                (
-                    inference_key_memory,
-                    inference_value_memory,
-                ) = inference_params.key_value_memory_dict[self.layer_number]
+                (inference_key_memory, inference_value_memory,) = inference_params.key_value_memory_dict[
+                    self.layer_number
+                ]
 
         # =====================
         # Query, Key, and Value
         # =====================
 
         if self.attention_type == "self":
-            qkv_weight = (
-                torch.cat((self.query, self.key, self.value))
-                if not self.fuse_qkv_params
-                else None
-            )
+            qkv_weight = torch.cat((self.query, self.key, self.value)) if not self.fuse_qkv_params else None
             qkv_bias = (
-                torch.cat((self.query_bias, self.key_bias, self.value_bias))
-                if not self.fuse_qkv_params
-                else None
+                torch.cat((self.query_bias, self.key_bias, self.value_bias)) if not self.fuse_qkv_params else None
             )
 
             # Attention heads [sq, b, h] --> [sq, b, (np * 3 * hn)]
             if self.input_layernorm:
                 layernorm_qkv_outputs = self.layernorm_qkv(
-                    hidden_states,
-                    weight=qkv_weight,
-                    bias=qkv_bias,
-                    is_first_microbatch=is_first_microbatch,
+                    hidden_states, weight=qkv_weight, bias=qkv_bias, is_first_microbatch=is_first_microbatch,
                 )
                 if self.return_layernorm_output:
                     mixed_x_layer, layernorm_output = layernorm_qkv_outputs
@@ -574,10 +508,7 @@ class MultiHeadAttention(torch.nn.Module):
                     mixed_x_layer = layernorm_qkv_outputs
             else:
                 mixed_x_layer = self.qkv(
-                    hidden_states,
-                    weight=qkv_weight,
-                    bias=qkv_bias,
-                    is_first_microbatch=is_first_microbatch,
+                    hidden_states, weight=qkv_weight, bias=qkv_bias, is_first_microbatch=is_first_microbatch,
                 )
 
             # [sq, b, (np * 3 * hn)] --> [sq, b, np, 3 * hn]
@@ -588,25 +519,14 @@ class MultiHeadAttention(torch.nn.Module):
             mixed_x_layer = mixed_x_layer.view(*new_tensor_shape)
 
             # [sq, b, np, 3 * hn] --> 3 [sq, b, np, hn]
-            query_layer, key_layer, value_layer = split_tensor_along_last_dim(
-                mixed_x_layer, 3
-            )
+            query_layer, key_layer, value_layer = split_tensor_along_last_dim(mixed_x_layer, 3)
         else:
-            kv_weight = (
-                torch.cat((self.key, self.value)) if not self.fuse_qkv_params else None
-            )
-            kv_bias = (
-                torch.cat((self.key_bias, self.value_bias))
-                if not self.fuse_qkv_params
-                else None
-            )
+            kv_weight = torch.cat((self.key, self.value)) if not self.fuse_qkv_params else None
+            kv_bias = torch.cat((self.key_bias, self.value_bias)) if not self.fuse_qkv_params else None
 
             # Attention heads [sk, b, h] --> [sk, b, (np * 2 * hn)]
             mixed_kv_layer = self.key_value(
-                encoder_output,
-                weight=kv_weight,
-                bias=kv_bias,
-                is_first_microbatch=is_first_microbatch,
+                encoder_output, weight=kv_weight, bias=kv_bias, is_first_microbatch=is_first_microbatch,
             )
 
             # [sk, b, (np * 2 * hn)] --> [sk, b, np, 2 * hn]
@@ -622,10 +542,7 @@ class MultiHeadAttention(torch.nn.Module):
             # Attention head [sq, b, h] --> [sq, b, hp]
             if self.input_layernorm:
                 layernorm_query_outputs = self.layernorm_query(
-                    hidden_states,
-                    weight=self.query,
-                    bias=self.query_bias,
-                    is_first_microbatch=is_first_microbatch,
+                    hidden_states, weight=self.query, bias=self.query_bias, is_first_microbatch=is_first_microbatch,
                 )
                 if self.return_layernorm_output:
                     query_layer, layernorm_output = layernorm_query_outputs
@@ -633,10 +550,7 @@ class MultiHeadAttention(torch.nn.Module):
                     query_layer = layernorm_query_outputs
             else:
                 query_layer = self.query(
-                    hidden_states,
-                    weight=self.query,
-                    bias=self.query_bias,
-                    is_first_microbatch=is_first_microbatch,
+                    hidden_states, weight=self.query, bias=self.query_bias, is_first_microbatch=is_first_microbatch,
                 )
 
             # [sq, b, hp] --> [sq, b, np, hn]
@@ -658,16 +572,10 @@ class MultiHeadAttention(torch.nn.Module):
             sequence_end = sequence_start + key_layer.size(0)
             assert sequence_end <= inference_key_memory.size(0)
             # Copy key and values.
-            inference_key_memory[
-                sequence_start:sequence_end, batch_start:batch_end, ...
-            ] = key_layer
-            inference_value_memory[
-                sequence_start:sequence_end, batch_start:batch_end, ...
-            ] = value_layer
+            inference_key_memory[sequence_start:sequence_end, batch_start:batch_end, ...] = key_layer
+            inference_value_memory[sequence_start:sequence_end, batch_start:batch_end, ...] = value_layer
             key_layer = inference_key_memory[:sequence_end, batch_start:batch_end, ...]
-            value_layer = inference_value_memory[
-                :sequence_end, batch_start:batch_end, ...
-            ]
+            value_layer = inference_value_memory[:sequence_end, batch_start:batch_end, ...]
 
         # ==================================
         # core attention computation
@@ -678,17 +586,13 @@ class MultiHeadAttention(torch.nn.Module):
                 query_layer, key_layer, value_layer, attention_mask
             )
         else:
-            context_layer = self.core_attention(
-                query_layer, key_layer, value_layer, attention_mask
-            )
+            context_layer = self.core_attention(query_layer, key_layer, value_layer, attention_mask)
 
         # =================
         # Output. [sq, b, h]
         # =================
 
-        attention_output, attention_bias = self.proj(
-            context_layer, is_first_microbatch=is_first_microbatch
-        )
+        attention_output, attention_bias = self.proj(context_layer, is_first_microbatch=is_first_microbatch)
 
         if self.input_layernorm and self.return_layernorm_output:
             return attention_output, attention_bias, layernorm_output
@@ -830,22 +734,14 @@ class TransformerLayer(torch.nn.Module):
         self.layer_number = layer_number
         self.output_layernorm = output_layernorm
         self.layer_type = layer_type
-        self.apply_residual_connection_post_layernorm = (
-            apply_residual_connection_post_layernorm
-        )
-        assert (
-            self_attn_mask_type in AttnMaskTypes
-        ), f"self_attn_mask_type {self_attn_mask_type} not supported"
+        self.apply_residual_connection_post_layernorm = apply_residual_connection_post_layernorm
+        assert self_attn_mask_type in AttnMaskTypes, f"self_attn_mask_type {self_attn_mask_type} not supported"
         assert layer_type in LayerTypes, f"layer_type {layer_type} not supported"
 
         if not fuse_qkv_params:
-            assert (
-                not fuse_wgrad_accumulation
-            ), "Gradient accumulation fusion requires single QKV parameter."
+            assert not fuse_wgrad_accumulation, "Gradient accumulation fusion requires single QKV parameter."
 
-        self.kv_channels = (
-            kv_channels if kv_channels else (hidden_size // num_attention_heads)
-        )
+        self.kv_channels = kv_channels if kv_channels else (hidden_size // num_attention_heads)
 
         if init_method is None:
             init_method = get_default_init_method()
@@ -929,18 +825,14 @@ class TransformerLayer(torch.nn.Module):
         TORCH_MAJOR = int(torch.__version__.split(".")[0])
         TORCH_MINOR = int(torch.__version__.split(".")[1])
         use_nvfuser = TORCH_MAJOR > 1 or (TORCH_MAJOR == 1 and TORCH_MINOR >= 10)
-        self.bias_dropout_add_exec_handler = (
-            nullcontext if use_nvfuser else torch.enable_grad
-        )
+        self.bias_dropout_add_exec_handler = nullcontext if use_nvfuser else torch.enable_grad
 
         if self.bias_dropout_fusion:
             set_jit_fusion_options()
             if seq_length and micro_batch_size:
                 if self.sequence_parallel:
                     seq_length = seq_length // tp_size
-                warmup_jit_bias_dropout_add_all_dtypes(
-                    hidden_size, seq_length, micro_batch_size
-                )
+                warmup_jit_bias_dropout_add_all_dtypes(hidden_size, seq_length, micro_batch_size)
 
         if self.output_layernorm:
             self.layernorm = LayerNorm(
@@ -1008,9 +900,7 @@ class TransformerLayer(torch.nn.Module):
 
         # For AMP
         if torch.is_autocast_enabled():
-            hidden_states = cast_if_needed(
-                hidden_states, torch.get_autocast_gpu_dtype()
-            )
+            hidden_states = cast_if_needed(hidden_states, torch.get_autocast_gpu_dtype())
 
         # Self attention.
         self_attention_outputs = self.self_attention(
@@ -1038,14 +928,10 @@ class TransformerLayer(torch.nn.Module):
         # Bias dropoout add.
         if self.drop_path is None:
             with self.bias_dropout_add_exec_handler():
-                bda_output = bias_dropout_add_func(
-                    attention_output, attention_bias, residual, self.hidden_dropout
-                )
+                bda_output = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
         else:
             out = torch.nn.functional.dropout(
-                attention_output + attention_bias,
-                p=self.hidden_dropout,
-                training=self.training,
+                attention_output + attention_bias, p=self.hidden_dropout, training=self.training,
             )
             bda_output = residual + self.drop_path(out)
 
@@ -1065,14 +951,10 @@ class TransformerLayer(torch.nn.Module):
                 residual = bda_output
 
             with self.bias_dropout_add_exec_handler():
-                bda_output = bias_dropout_add_func(
-                    attention_output, attention_bias, residual, self.hidden_dropout
-                )
+                bda_output = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
 
         # MLP.
-        mlp_outputs = self.layernorm_mlp(
-            bda_output, is_first_microbatch=is_first_microbatch
-        )
+        mlp_outputs = self.layernorm_mlp(bda_output, is_first_microbatch=is_first_microbatch)
         if self.apply_residual_connection_post_layernorm:
             mlp_output, mlp_bias, residual = mlp_outputs
         else:
@@ -1082,13 +964,9 @@ class TransformerLayer(torch.nn.Module):
         # Bias dropoout add.
         if self.drop_path is None:
             with self.bias_dropout_add_exec_handler():
-                output = bias_dropout_add_func(
-                    mlp_output, mlp_bias, residual, self.hidden_dropout
-                )
+                output = bias_dropout_add_func(mlp_output, mlp_bias, residual, self.hidden_dropout)
         else:
-            out = torch.nn.functional.dropout(
-                mlp_output + mlp_bias, p=self.hidden_dropout, training=self.training
-            )
+            out = torch.nn.functional.dropout(mlp_output + mlp_bias, p=self.hidden_dropout, training=self.training)
             output = residual + self.drop_path(out)
 
         # For BERT like architectures.

@@ -6,7 +6,6 @@
 import torch
 import transformer_engine_extensions as tex
 
-
 """
 This is a map: torch.dtype -> int
 Used for passing dtypes into cuda

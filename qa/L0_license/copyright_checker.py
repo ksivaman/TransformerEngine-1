@@ -6,10 +6,10 @@
 # See LICENSE for license information.
 
 
+import datetime
+import json
 import os
 import sys
-import json
-import datetime
 
 if len(sys.argv) < 2:
     print("Usage: python copyright_checker.py <path>")
@@ -18,20 +18,25 @@ path = sys.argv[1]
 
 config_path = os.path.dirname(os.path.realpath(__file__)) + "/config.json"
 
+
 class bcolors:
     OKGREEN = '\033[92m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
 
+
 def print_ok(msg):
     print(f"{bcolors.OKGREEN}{msg}{bcolors.ENDC}")
+
 
 def print_fail(msg):
     print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}")
 
+
 def print_warn(msg):
     print(f"{bcolors.WARNING}{msg}{bcolors.ENDC}")
+
 
 with open(config_path, "r") as f:
     c = json.load(f)
@@ -49,6 +54,7 @@ with open(config_path, "r") as f:
 
 has_gitignore = os.path.exists(root_path + "/.gitignore")
 
+
 def strip_star_slash(s):
     ret = s
     if ret.startswith('*'):
@@ -57,26 +63,31 @@ def strip_star_slash(s):
         ret = ret[:-1]
     return ret
 
+
 if has_gitignore:
     with open(root_path + "/.gitignore", "r") as f:
         for line in f.readlines():
             excludes.append(strip_star_slash(line.strip()))
 
+
 def get_file_type(path):
-    ext = {"c": ["c", "cpp", "cu", "h", "cuh"],
-           "py": ["py"],
-           "rst": ["rst"],
-           "txt": ["txt"],
-           "cfg": ["cfg"],
-           "sh":  ["sh"],
-          }
+    ext = {
+        "c": ["c", "cpp", "cu", "h", "cuh"],
+        "py": ["py"],
+        "rst": ["rst"],
+        "txt": ["txt"],
+        "cfg": ["cfg"],
+        "sh": ["sh"],
+    }
     tmp = path.split(".")
     for filetype, ext_list in ext.items():
         if tmp[-1] in ext_list:
             return filetype
     return "unknown"
 
+
 success = True
+
 
 def check_file(path):
     global success
@@ -125,6 +136,7 @@ def check_file(path):
                 success = False
             if copyright_found and license_found:
                 print_ok("OK")
+
 
 for root, dirs, files in os.walk(root_path):
     print(f"Entering {root}")

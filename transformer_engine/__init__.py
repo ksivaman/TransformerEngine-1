@@ -3,5 +3,4 @@
 # See LICENSE for license information.
 
 """Top level package"""
-from . import common
-from . import pytorch
+from . import common, pytorch

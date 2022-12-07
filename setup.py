@@ -3,28 +3,29 @@
 # See LICENSE for license information.
 
 import atexit
-import os
-import sys
-import subprocess
-import io
-import re
 import copy
+import io
+import os
+import re
+import subprocess
+import sys
 import tempfile
-from setuptools import setup, find_packages, Extension
-from setuptools.command.build_ext import build_ext
-from distutils.version import LooseVersion
 from distutils.file_util import copy_file
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CUDA_HOME
+from distutils.version import LooseVersion
+
+from setuptools import Extension, find_packages, setup
+from setuptools.command.build_ext import build_ext
+
+from torch.utils.cpp_extension import CUDA_HOME, BuildExtension, CUDAExtension
 
 path = os.path.dirname(os.path.realpath(__file__))
 
 with open(path + "/VERSION", "r") as f:
     te_version = f.readline()
 
+
 def get_cuda_bare_metal_version(cuda_dir):
-    raw_output = subprocess.check_output(
-        [cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True
-    )
+    raw_output = subprocess.check_output([cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True)
     output = raw_output.split()
     release_idx = output.index("release") + 1
     release = output[release_idx].split(".")
@@ -129,10 +130,7 @@ if framework in ("all", "pytorch"):
         CUDAExtension(
             name="transformer_engine_extensions",
             sources=supported_frameworks[framework],
-            extra_compile_args={
-                "cxx": ["-O3"],
-                "nvcc": append_nvcc_threads(extra_compiler_flags() + cc_flag),
-            },
+            extra_compile_args={"cxx": ["-O3"], "nvcc": append_nvcc_threads(extra_compiler_flags() + cc_flag),},
             include_dirs=include_dirs,
         )
     )
@@ -145,9 +143,7 @@ def get_cmake_bin():
     except OSError:
         cmake_installed_version = LooseVersion("0.0")
     else:
-        cmake_installed_version = LooseVersion(
-            re.search(r"version\s*([\d.]+)", out.decode()).group(1)
-        )
+        cmake_installed_version = LooseVersion(re.search(r"version\s*([\d.]+)", out.decode()).group(1))
 
     if cmake_installed_version < LooseVersion("3.18.0"):
         print(
@@ -158,14 +154,9 @@ def get_cmake_bin():
         cmake_temp_dir = tempfile.TemporaryDirectory(prefix="nvte-cmake-tmp")
         atexit.register(cmake_temp_dir.cleanup)
         try:
-            _ = subprocess.check_output(
-                ["pip", "install", "--target", cmake_temp_dir.name, "cmake~=3.18.0"]
-            )
+            _ = subprocess.check_output(["pip", "install", "--target", cmake_temp_dir.name, "cmake~=3.18.0"])
         except Exception:
-            raise RuntimeError(
-                "Failed to install temporary CMake. "
-                "Please update your CMake to 3.18+."
-            )
+            raise RuntimeError("Failed to install temporary CMake. " "Please update your CMake to 3.18+.")
         cmake_bin = os.path.join(cmake_temp_dir.name, "bin", "run_cmake")
         with io.open(cmake_bin, "w") as f_run_cmake:
             f_run_cmake.write(
@@ -187,9 +178,7 @@ class CMakeBuildExtension(build_ext, object):
         config = "Debug" if self.debug else "Release"
 
         ext_name = self.extensions[0].name
-        build_dir = self.get_ext_fullpath(ext_name).replace(
-            self.get_ext_filename(ext_name), ""
-        )
+        build_dir = self.get_ext_fullpath(ext_name).replace(self.get_ext_filename(ext_name), "")
         build_dir = os.path.abspath(build_dir)
 
         cmake_args = [
@@ -249,9 +238,7 @@ class TEBuildExtension(build_ext, object):
         cmake_ext = [ext for ext in self.extensions if isinstance(ext, CMakeExtension)]
         self.cmake_build_extensions.extensions = cmake_ext
         self.cmake_build_extensions.run()
-        other_ext = [
-            ext for ext in self.extensions if not isinstance(ext, CMakeExtension)
-        ]
+        other_ext = [ext for ext in self.extensions if not isinstance(ext, CMakeExtension)]
         self.pytorch_build_extensions.extensions = other_ext
         print("Building pyTorch extensions!")
         self.pytorch_build_extensions.run()
@@ -276,17 +263,12 @@ class TEBuildExtension(build_ext, object):
         for f in os.scandir(self.build_lib):
             if f.is_file():
                 src_filename = f.path
-                dest_filename = os.path.join(
-                    package_dir, os.path.basename(src_filename)
-                )
+                dest_filename = os.path.join(package_dir, os.path.basename(src_filename))
                 # Always copy, even if source is older than destination, to ensure
                 # that the right extensions for the current Python/platform are
                 # used.
                 copy_file(
-                    src_filename,
-                    dest_filename,
-                    verbose=self.verbose,
-                    dry_run=self.dry_run,
+                    src_filename, dest_filename, verbose=self.verbose, dry_run=self.dry_run,
                 )
 
     def get_outputs(self):

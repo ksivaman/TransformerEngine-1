@@ -4,6 +4,7 @@
 
 try:
     import transformer_engine.pytorch
+
     te_imported = True
 except:
     te_imported = False
