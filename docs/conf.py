@@ -70,7 +70,13 @@ Version select: <select onChange="window.location.href = this.value" onFocus="th
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.mathjax', 'sphinx.ext.napoleon', 'nbsphinx', 'breathe']
+extensions = [
+    'sphinx.ext.autodoc',
+    'sphinx.ext.mathjax',
+    'sphinx.ext.napoleon',
+    'nbsphinx',
+    'breathe',
+]
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']

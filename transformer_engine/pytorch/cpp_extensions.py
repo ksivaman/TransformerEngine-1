@@ -33,7 +33,12 @@ def fp8_gemm(
 
     return_output = False
     if out is None:
-        out = torch.empty(B.shape[0], A.shape[0], dtype=torch.float32 if fp32_output else out_dtype, device="cuda",)
+        out = torch.empty(
+            B.shape[0],
+            A.shape[0],
+            dtype=torch.float32 if fp32_output else out_dtype,
+            device="cuda",
+        )
         return_output = True
 
     out_dtype = tex.DType.kFloat32 if fp32_output else TE_DType[out_dtype]
@@ -104,7 +109,9 @@ def gemm(
         gelu_input = empty_tensor
 
     if grad and use_bias:
-        grad_bias = torch.empty(B.shape[1], dtype=torch.float32 if fp32_output else dtype, device="cuda")
+        grad_bias = torch.empty(
+            B.shape[1], dtype=torch.float32 if fp32_output else dtype, device="cuda"
+        )
     else:
         grad_bias = empty_tensor
 

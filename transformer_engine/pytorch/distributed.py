@@ -50,7 +50,9 @@ def _set_cuda_rng_state(new_state: torch.Tensor, device: Union[int, str] = -1) -
     _lazy_call(cb)
 
 
-def set_tensor_model_parallel_attributes(tensor: torch.Tensor, is_parallel: bool, dim: int, stride: int) -> None:
+def set_tensor_model_parallel_attributes(
+    tensor: torch.Tensor, is_parallel: bool, dim: int, stride: int
+) -> None:
     """set attributes needed for TP"""
     for attribute in _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS:
         assert not hasattr(tensor, attribute)
@@ -74,11 +76,17 @@ def get_distributed_rank(group: Optional[dist_group_type] = None) -> int:
 
 
 def initialize_affine_weight_gpu(
-    weight: torch.Tensor, init_method: Callable, get_rng_state_tracker: Callable, partition_dim: int, stride: int = 1,
+    weight: torch.Tensor,
+    init_method: Callable,
+    get_rng_state_tracker: Callable,
+    partition_dim: int,
+    stride: int = 1,
 ) -> None:
     """Initialize affine weight for model parallel on GPU."""
 
-    set_tensor_model_parallel_attributes(tensor=weight, is_parallel=True, dim=partition_dim, stride=stride)
+    set_tensor_model_parallel_attributes(
+        tensor=weight, is_parallel=True, dim=partition_dim, stride=stride
+    )
 
     if get_rng_state_tracker is None:
         init_method(weight)
@@ -97,7 +105,10 @@ def split_tensor_into_1d_equal_chunks(
     end_index = start_index + partition_size
     if new_buffer:
         data = torch.empty(
-            partition_size, dtype=tensor.dtype, device=torch.cuda.current_device(), requires_grad=False,
+            partition_size,
+            dtype=tensor.dtype,
+            device=torch.cuda.current_device(),
+            requires_grad=False,
         )
         data.copy_(tensor.view(-1)[start_index:end_index])
     else:
@@ -116,7 +127,9 @@ def gather_split_1d_tensor(tensor: torch.Tensor, tp_group: dist_group_type) -> t
 
 
 @contextmanager
-def activation_recompute_forward(activation_recompute: bool = False, recompute_phase: bool = False,) -> None:
+def activation_recompute_forward(
+    activation_recompute: bool = False, recompute_phase: bool = False,
+) -> None:
     """Context manager used to control the forward runtime behavior when executed
     under the `CheckpointFunction` function. For running FP8, the forward pass will
     run without storing intermediate activations. Instead, the forward pass saves
@@ -193,16 +206,22 @@ class CheckpointFunction(torch.autograd.Function):
         return outputs
 
     @staticmethod
-    def backward(ctx, *args: Tuple[Union[torch.Tensor, None], ...]) -> Tuple[Union[torch.Tensor, None], ...]:
+    def backward(
+        ctx, *args: Tuple[Union[torch.Tensor, None], ...]
+    ) -> Tuple[Union[torch.Tensor, None], ...]:
         """Call backward function with activation recomputation."""
         if not torch.autograd._is_checkpoint_valid():
-            raise RuntimeError("Checkpointing is not compatible with .grad(), " "please use .backward() if possible")
+            raise RuntimeError(
+                "Checkpointing is not compatible with .grad(), "
+                "please use .backward() if possible"
+            )
         inputs = ctx.saved_tensors
         get_cuda_rng_tracker = ctx.get_cuda_rng_tracker
 
         if ctx.distribute_saved_activations:
             safely_set_viewless_tensor_data(
-                inputs[0], gather_split_1d_tensor(inputs[0].data, ctx.tp_group).view(ctx.input_0_shape),
+                inputs[0],
+                gather_split_1d_tensor(inputs[0].data, ctx.tp_group).view(ctx.input_0_shape),
             )
 
         # Store the current states.
@@ -295,12 +314,16 @@ def reduce_scatter_along_first_dim(
         return input_, None
 
     dim_size = list(input_.size())
-    assert dim_size[0] % world_size == 0, "First dimension of the tensor should be divisible by tensor parallel size"
+    assert (
+        dim_size[0] % world_size == 0
+    ), "First dimension of the tensor should be divisible by tensor parallel size"
 
     dim_size[0] = dim_size[0] // world_size
 
     output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
-    handle = torch.distributed._reduce_scatter_base(output, input_.contiguous(), group=tp_group, async_op=async_op)
+    handle = torch.distributed._reduce_scatter_base(
+        output, input_.contiguous(), group=tp_group, async_op=async_op
+    )
     return output, handle
 
 
@@ -318,7 +341,9 @@ def gather_along_first_dim(
     dim_size[0] = dim_size[0] * world_size
 
     output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
-    handle = torch.distributed._all_gather_base(output, input_.contiguous(), group=tp_group, async_op=async_op)
+    handle = torch.distributed._all_gather_base(
+        output, input_.contiguous(), group=tp_group, async_op=async_op
+    )
 
     return output, handle
 
@@ -337,7 +362,9 @@ def gather_along_last_dim(
     dim_size[-1] = dim_size[-1] * world_size
 
     output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
-    handle = torch.distributed._all_gather_base(output, input_.contiguous(), group=tp_group, async_op=async_op)
+    handle = torch.distributed._all_gather_base(
+        output, input_.contiguous(), group=tp_group, async_op=async_op
+    )
 
     return output, handle
 

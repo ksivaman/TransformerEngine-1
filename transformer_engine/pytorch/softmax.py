@@ -35,7 +35,9 @@ class ScaledUpperTriangMaskedSoftmax(torch.autograd.Function):
     def backward(ctx, output_grads: torch.Tensor) -> Tuple[Union[torch.Tensor, None], ...]:
         """ScaledUpperTriangMaskedSoftmax bwd"""
         softmax_results, scale_t = ctx.saved_tensors
-        input_grads = tex.scaled_upper_triang_masked_softmax_backward(output_grads, softmax_results, scale_t[0])
+        input_grads = tex.scaled_upper_triang_masked_softmax_backward(
+            output_grads, softmax_results, scale_t[0]
+        )
 
         return input_grads, None
 
@@ -102,7 +104,9 @@ class FusedScaleMaskSoftmax(nn.Module):
         scale: scaling factor used in input tensor scaling.
     """
 
-    def __init__(self, attn_mask_type: str, mask_func: Callable, softmax_in_fp32: bool, scale: float,) -> None:
+    def __init__(
+        self, attn_mask_type: str, mask_func: Callable, softmax_in_fp32: bool, scale: float,
+    ) -> None:
         super().__init__()
         self.attn_mask_type = attn_mask_type
         self.scaled_masked_softmax_fusion = bool(int(os.getenv("NVTE_MASKED_SOFTMAX_FUSION", "1")))

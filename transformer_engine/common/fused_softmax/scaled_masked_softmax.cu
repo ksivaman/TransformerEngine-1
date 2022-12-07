@@ -102,7 +102,7 @@ __device__ __forceinline__ void warp_reduce(acc_t* sum) {
 /*
  * Extended softmax (from native aten pytorch) with following additional features
  * 1) input scaling
- */  
+ */
 template <typename input_t, typename output_t, typename acc_t, int log2_elements>
 __global__ void scaled_softmax_warp_forward(
     output_t *dst,
@@ -215,7 +215,7 @@ __global__ void scaled_softmax_warp_forward(
  * Extended softmax (from native aten pytorch) with following additional features
  * 1) input scaling
  * 2) Explicit masking
- */  
+ */
 template <typename input_t, typename output_t, typename acc_t, int log2_elements>
 __global__ void scaled_masked_softmax_warp_forward(
     output_t *dst,
