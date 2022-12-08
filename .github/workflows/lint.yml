@@ -35,4 +35,3 @@ jobs:
           export PYTHON_ONLY=1
           export TE_PATH=.
           bash ./qa/L0_lint/test.sh
-

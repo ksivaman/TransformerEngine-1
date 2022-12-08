@@ -208,4 +208,3 @@ bool isFp8Type(DType type);
         default: \
             NVTE_ERROR("Invalid type."); \
     }
-

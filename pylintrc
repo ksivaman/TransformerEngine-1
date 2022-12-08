@@ -27,4 +27,3 @@ disable=too-many-locals,
 [TYPECHECK]
 ignored-modules=torch
 ignored-classes=torch
-
