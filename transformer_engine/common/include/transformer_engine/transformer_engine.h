@@ -11,8 +11,8 @@
 #ifndef TRANSFORMER_ENGINE_TRANSFORMER_ENGINE_H_
 #define TRANSFORMER_ENGINE_TRANSFORMER_ENGINE_H_
 
-#include <stddef.h>
 #include <cuda_runtime_api.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,14 +22,14 @@ extern "C" {
  *  \brief TE datatype.
  */
 enum NVTEDType {
-    kNVTEByte       = 0,  /*!< Byte */
-    kNVTEInt32      = 1,  /*!< 32-bit integer */
-    kNVTEFloat32    = 2,  /*!< 32-bit float */
-    kNVTEFloat16    = 3,  /*!< 16-bit float (E5M10) */
-    kNVTEBFloat16   = 4,  /*!< 16-bit bfloat (E8M7) */
-    kNVTEFloat8E4M3 = 5,  /*!< 8-bit float (E4M3) */
-    kNVTEFloat8E5M2 = 6,  /*!< 8-bit float (E5M2) */
-    kNVTENumTypes         /*!< Number of supported types */
+  kNVTEByte = 0,       /*!< Byte */
+  kNVTEInt32 = 1,      /*!< 32-bit integer */
+  kNVTEFloat32 = 2,    /*!< 32-bit float */
+  kNVTEFloat16 = 3,    /*!< 16-bit float (E5M10) */
+  kNVTEBFloat16 = 4,   /*!< 16-bit bfloat (E8M7) */
+  kNVTEFloat8E4M3 = 5, /*!< 8-bit float (E4M3) */
+  kNVTEFloat8E5M2 = 6, /*!< 8-bit float (E5M2) */
+  kNVTENumTypes        /*!< Number of supported types */
 };
 
 /*! \struct NVTEShape
@@ -48,7 +48,7 @@ struct NVTEShape {
  * to data of a given shape and type. It does not own the
  * memory it points to.
  */
-typedef void* NVTETensor;
+typedef void *NVTETensor;
 
 /*! \brief Create a new TE tensor.
  *
@@ -62,9 +62,7 @@ typedef void* NVTETensor;
  *
  *  \return A new TE tensor.
  */
-NVTETensor nvte_create_tensor(void *dptr,
-                              const NVTEShape shape,
-                              const NVTEDType dtype);
+NVTETensor nvte_create_tensor(void *dptr, const NVTEShape shape, const NVTEDType dtype);
 
 /*! \brief Destroy a TE tensor.
  *
@@ -99,7 +97,6 @@ NVTEShape nvte_tensor_shape(const NVTETensor tensor);
  */
 void *nvte_tensor_data(const NVTETensor tensor);
 
-
 #ifdef __cplusplus
 }  // extern "C"
 
@@ -114,11 +111,11 @@ namespace transformer_engine {
  *  \brief TE datatype.
  */
 enum class DType {
-  kByte       = 0,
-  kInt32      = 1,
-  kFloat32    = 2,
-  kFloat16    = 3,
-  kBFloat16   = 4,
+  kByte = 0,
+  kInt32 = 1,
+  kFloat32 = 2,
+  kFloat16 = 3,
+  kBFloat16 = 4,
   kFloat8E4M3 = 5,
   kFloat8E5M2 = 6,
   kNumTypes
@@ -139,8 +136,8 @@ class TensorWrapper {
    *  \param[in] shape Shape of the tensor.
    *  \param[in] dtype Data type of the tensor.
    */
-  TensorWrapper(void *dptr, const NVTEShape &shape, const DType dtype) :
-    tensor_(nvte_create_tensor(dptr, shape, static_cast<NVTEDType>(dtype))) {}
+  TensorWrapper(void *dptr, const NVTEShape &shape, const DType dtype)
+      : tensor_(nvte_create_tensor(dptr, shape, static_cast<NVTEDType>(dtype))) {}
 
   /*! \brief Constructs new TensorWrapper.
    *
@@ -152,8 +149,8 @@ class TensorWrapper {
    *  \param[in] shape Shape of the tensor.
    *  \param[in] dtype Data type of the tensor.
    */
-  TensorWrapper(void *dptr, const std::vector<size_t> &shape, const DType dtype) :
-    TensorWrapper(dptr, NVTEShape{shape.data(), shape.size()}, dtype) {}
+  TensorWrapper(void *dptr, const std::vector<size_t> &shape, const DType dtype)
+      : TensorWrapper(dptr, NVTEShape{shape.data(), shape.size()}, dtype) {}
 
   /*! \brief Constructs new empty TensorWrapper.
    *
@@ -162,11 +159,9 @@ class TensorWrapper {
   TensorWrapper() : TensorWrapper(nullptr, std::vector<size_t>(), DType::kFloat32) {}
 
   /*! \brief TensorWrapper destructor. */
-  ~TensorWrapper() {
-    nvte_destroy_tensor(tensor_);
-  }
+  ~TensorWrapper() { nvte_destroy_tensor(tensor_); }
 
-  TensorWrapper& operator=(const TensorWrapper &other) = delete;
+  TensorWrapper &operator=(const TensorWrapper &other) = delete;
   TensorWrapper(const TensorWrapper &other) = delete;
 
   /*! \brief Constructs new TensorWrapper from existing TensorWrapper.
@@ -186,7 +181,7 @@ class TensorWrapper {
    *
    *  \param[in,out] other The source of the data.
    */
-  TensorWrapper& operator=(TensorWrapper &&other) {
+  TensorWrapper &operator=(TensorWrapper &&other) {
     if (this == &other) return *this;
     nvte_destroy_tensor(tensor_);
     tensor_ = other.tensor_;
@@ -198,9 +193,7 @@ class TensorWrapper {
    *
    *  \return NVTETensor held by this TensorWrapper.
    */
-  NVTETensor data() const noexcept {
-    return tensor_;
-  }
+  NVTETensor data() const noexcept { return tensor_; }
 
   /*! \brief Get the shape of this TensorWrapper.
    *

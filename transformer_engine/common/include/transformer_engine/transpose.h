@@ -31,12 +31,8 @@ extern "C" {
  *  \param[out]    scale_inv           Inverse of the output's scaling factor.
  *  \param[in]     stream              CUDA stream used for the operation.
  */
-void nvte_cast_transpose(const NVTETensor input,
-                         const NVTETensor scale,
-                         NVTETensor cast_output,
-                         NVTETensor transposed_output,
-                         NVTETensor amax,
-                         NVTETensor scale_inv,
+void nvte_cast_transpose(const NVTETensor input, const NVTETensor scale, NVTETensor cast_output,
+                         NVTETensor transposed_output, NVTETensor amax, NVTETensor scale_inv,
                          cudaStream_t stream);
 
 /*! \brief Transpose the input.
@@ -45,9 +41,7 @@ void nvte_cast_transpose(const NVTETensor input,
  *  \param[out]    transposed_output   Result of the transpose. Shape: [H, N].
  *  \param[in]     stream              CUDA stream used for the operation.
  */
-void nvte_transpose(const NVTETensor input,
-                    NVTETensor transposed_output,
-                    cudaStream_t stream);
+void nvte_transpose(const NVTETensor input, NVTETensor transposed_output, cudaStream_t stream);
 
 /*! \brief Cast and transpose the input. Additionally, reduce the input along the first dimension.
  *
@@ -70,15 +64,10 @@ void nvte_transpose(const NVTETensor input,
  *  \param[out]    workspace           Workspace tensor.
  *  \param[in]     stream              CUDA stream used for the operation.
  */
-void nvte_cast_transpose_dbias(const NVTETensor input,
-                               const NVTETensor scale,
-                               NVTETensor cast_output,
-                               NVTETensor transposed_output,
-                               NVTETensor amax,
-                               NVTETensor dbias,
-                               NVTETensor scale_inv,
-                               NVTETensor workspace,
-                               cudaStream_t stream);
+void nvte_cast_transpose_dbias(const NVTETensor input, const NVTETensor scale,
+                               NVTETensor cast_output, NVTETensor transposed_output,
+                               NVTETensor amax, NVTETensor dbias, NVTETensor scale_inv,
+                               NVTETensor workspace, cudaStream_t stream);
 
 /*! \brief Compute backward of GELU operation on the input, then cast and transpose. Additionally,
  *         reduce the result of the GELU backward along the first dimension.
@@ -104,15 +93,10 @@ void nvte_cast_transpose_dbias(const NVTETensor input,
  *  \param[out]    workspace           Workspace tensor.
  *  \param[in]     stream              CUDA stream used for the operation.
  */
-void nvte_cast_transpose_dbias_dgelu(const NVTETensor input,
-                                     const NVTETensor gelu_input,
-                                     const NVTETensor scale,
-                                     NVTETensor cast_output,
-                                     NVTETensor transposed_output,
-                                     NVTETensor amax,
-                                     NVTETensor dbias,
-                                     NVTETensor scale_inv,
-                                     NVTETensor workspace,
+void nvte_cast_transpose_dbias_dgelu(const NVTETensor input, const NVTETensor gelu_input,
+                                     const NVTETensor scale, NVTETensor cast_output,
+                                     NVTETensor transposed_output, NVTETensor amax,
+                                     NVTETensor dbias, NVTETensor scale_inv, NVTETensor workspace,
                                      cudaStream_t stream);
 
 /*! \brief Cast and transpose multiple tensors.
@@ -133,14 +117,10 @@ void nvte_cast_transpose_dbias_dgelu(const NVTETensor input,
  *  \param[out]    scale_inv_list           Inverses of the scaling factors.
  *  \param[in]     stream                   CUDA stream used for the operation.
  */
-void nvte_multi_cast_transpose(size_t num_tensors,
-                               const NVTETensor* input_list,
-                               const NVTETensor* scale_list,
-                               NVTETensor* cast_output_list,
-                               NVTETensor* transposed_output_list,
-                               NVTETensor* amax_list,
-                               NVTETensor* scale_inv_list,
-                               cudaStream_t stream);
+void nvte_multi_cast_transpose(size_t num_tensors, const NVTETensor *input_list,
+                               const NVTETensor *scale_list, NVTETensor *cast_output_list,
+                               NVTETensor *transposed_output_list, NVTETensor *amax_list,
+                               NVTETensor *scale_inv_list, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"

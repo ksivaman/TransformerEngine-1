@@ -40,21 +40,11 @@ extern "C" {
  *  \param[in,out] amax                AMAX value of the output tensor.
  *  \param[out]    scale_inv           Inverse of the output's scaling factor.
  */
-void nvte_layernorm_fwd(const NVTETensor x,
-                        const NVTETensor gamma,
-                        const NVTETensor beta,
-                        const NVTETensor scale,
-                        const float epsilon,
-                        NVTETensor z,
-                        NVTETensor mu,
-                        NVTETensor rsigma,
-                        cudaStream_t stream,
-                        const int multiprocessorCount,
-                        NVTETensor workspace,
-                        NVTETensor barrier,
-                        NVTETensor amax,
+void nvte_layernorm_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
+                        const NVTETensor scale, const float epsilon, NVTETensor z, NVTETensor mu,
+                        NVTETensor rsigma, cudaStream_t stream, const int multiprocessorCount,
+                        NVTETensor workspace, NVTETensor barrier, NVTETensor amax,
                         NVTETensor scale_inv);
-
 
 /*! \brief Compute backward of LayerNorm.
  *
@@ -79,20 +69,14 @@ void nvte_layernorm_fwd(const NVTETensor x,
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_layernorm_bwd(const NVTETensor dz,       // BxSxhidden_size
-                        const NVTETensor x,        // BxSxhidden_size
-                        const NVTETensor mu,       // BxS, FP32!
-                        const NVTETensor rsigma,   // BxS, FP32!
-                        const NVTETensor gamma,    // hidden_size
-                        NVTETensor dx,
-                        NVTETensor dgamma,
-                        NVTETensor dbeta,
-                        NVTETensor dgamma_part,
-                        NVTETensor dbeta_part,
-                        cudaStream_t stream,
-                        const int multiprocessorCount,
-                        NVTETensor workspace,
-                        NVTETensor barrier);
+void nvte_layernorm_bwd(const NVTETensor dz,      // BxSxhidden_size
+                        const NVTETensor x,       // BxSxhidden_size
+                        const NVTETensor mu,      // BxS, FP32!
+                        const NVTETensor rsigma,  // BxS, FP32!
+                        const NVTETensor gamma,   // hidden_size
+                        NVTETensor dx, NVTETensor dgamma, NVTETensor dbeta, NVTETensor dgamma_part,
+                        NVTETensor dbeta_part, cudaStream_t stream, const int multiprocessorCount,
+                        NVTETensor workspace, NVTETensor barrier);
 
 #ifdef __cplusplus
 }  // extern "C"

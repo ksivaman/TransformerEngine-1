@@ -26,12 +26,8 @@ extern "C" {
  *  \param[out]    scale_inv Inverse of the output's scaling factor.
  *  \param[in]     stream    CUDA stream used for the operation.
  */
-void nvte_gelu(const NVTETensor input,
-               NVTETensor output,
-               const NVTETensor scale,
-               NVTETensor amax,
-               NVTETensor scale_inv,
-               cudaStream_t stream);
+void nvte_gelu(const NVTETensor input, NVTETensor output, const NVTETensor scale, NVTETensor amax,
+               NVTETensor scale_inv, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"
