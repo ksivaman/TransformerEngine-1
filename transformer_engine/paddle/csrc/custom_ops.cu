@@ -1023,11 +1023,18 @@ __global__ void UpdateScalesKernel(const float *amax, const float *scale, float 
                                    float fp8_max, size_t size, float *scale_out) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (idx < size) {
-        float exp = floor(log2(fp8_max / amax[idx])) - margin;
-        float sf = round(powf(2.0f, abs(exp)));
-        sf = ((amax[idx] > 0.0f) && isfinite(amax[idx])) ? sf : scale[idx];
-        scale_out[idx] = exp < 0.0f ? 1 / sf : sf;
+    if (idx >= history_numel) {
+        return;
+    }
+
+    amax_history[idx] = rolled_amax_history[idx];
+
+    if (idx < amax_numel) {
+        float sf = (fp8_max / amax[idx]) / powf(2.0f, margin);
+        float scale_reg = ((amax[idx] > 0.0f) && isfinite(amax[idx])) ? sf : scale[idx];
+        scale[idx] = scale_reg;
+        scale_inv[idx] = 1.0f / scale_reg;
+        amax_history[idx] = 0.0f;
     }
 }
 
