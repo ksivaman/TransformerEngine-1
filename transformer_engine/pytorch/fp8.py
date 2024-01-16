@@ -746,8 +746,10 @@ def qdq(tensor: torch.Tensor, format: Format = Format.E4M3, margin: int = 0) -> 
 
     assert format in (Format.E4M3, Format.E5M2), "Unsupported FP8 format."
     assert tensor.dtype in (torch.float, torch.float16, torch.bfloat16), "Unsupported tensor type."
+    assert tensor.is_cuda, "Must be a GPU tensor."
+
     amax = torch.max(torch.abs(tensor)).float()
-    scale = _default_sf_compute(amax, 1.0, format.max_fwd, margin)
+    scale = _default_sf_compute(amax, 1.0, format.value.max_fwd, margin)
     scale_inv = 1.0 / scale
 
     # Cast.
