@@ -12,7 +12,7 @@ import torch
 import transformer_engine_extensions as tex
 from transformer_engine.common.recipe import DelayedScaling, Format
 
-from .constants import dist_group_type
+from .constants import dist_group_type, TE_DType
 from .utils import get_device_compute_capability
 from .jit import jit_fuser
 
@@ -740,3 +740,19 @@ def amax_and_scale_update(
             fp8_meta[fp8_meta_tensor_key + "_non_weight_mask"],
             update_weight_scale_inv,
         )
+
+def qdq(tensor: torch.Tensor, format: Format = Format.E4M3, margin: int = 0) -> torch.Tensor:
+    """Casts the given tensor to and from FP8 using the current scaling recipe."""
+
+    assert format in (Format.E4M3, Format.E5M2), "Unsupported FP8 format."
+    assert tensor.dtype in (torch.float, torch.float16, torch.bfloat16), "Unsupported tensor type."
+    amax = torch.max(torch.abs(tensor)).float()
+    scale = _default_sf_compute(amax, 1.0, format.max_fwd, margin)
+    scale_inv = 1.0 / scale
+
+    # Cast.
+    fp8_type = tex.DType.kFloat8E5M2 if format == Format.E5M2 else tex.DType.kFloat8E4M3
+    fp8_tensor = tex.cast_to_fp8(tensor, scale, amax, scale_inv, fp8_type)
+
+    # Uncast.
+    return tex.cast_from_fp8(fp8_tensor, scale_inv, fp8_type, TE_DType[tensor.dtype])
