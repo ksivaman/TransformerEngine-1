@@ -749,7 +749,8 @@ def qdq(tensor: torch.Tensor, format: Format = Format.E4M3, margin: int = 0) -> 
     assert tensor.is_cuda, "Must be a GPU tensor."
 
     amax = torch.max(torch.abs(tensor)).float()
-    scale = _default_sf_compute(amax, 1.0, format.value.max_fwd, margin)
+    one = torch.ones(1, device="cuda")
+    scale = _default_sf_compute(amax, one, format.value.max_fwd, margin)
     scale_inv = 1.0 / scale
 
     # Cast.
