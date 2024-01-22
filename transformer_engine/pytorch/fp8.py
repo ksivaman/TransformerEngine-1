@@ -196,15 +196,7 @@ class FP8GlobalStateManager:
                 fp8_meta[fp8_meta_tensor_key].amax_history[0]
             )
 
-        if buffer_position_key not in fp8_meta:
-            fp8_meta[buffer_position_key] = len(cls.global_fp8_buffer[buffer_key]) - 1
-
-        # Catch incorrect fp8_autocast usage.
-        assert fp8_meta[buffer_position_key] == len(cls.global_fp8_buffer[buffer_key]) - 1, \
-            "Same module is being invoked more than once inside an `fp8_autocast` " \
-            "region when using FP8 with amax reduction. This behavior is currently" \
-            " unsupported. For more details and correct usage, please see " \
-            "https://github.com/NVIDIA/TransformerEngine/pull/93."
+        fp8_meta[buffer_position_key] = len(cls.global_fp8_buffer[buffer_key]) - 1
 
     @classmethod
     def copy_amax_from_global_buffer(
