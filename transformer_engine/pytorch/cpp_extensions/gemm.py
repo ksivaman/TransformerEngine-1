@@ -171,8 +171,7 @@ def gemm(
         ), "GEMM-gelu fusion not available for FP8."
 
         return fp8_gemm_current_scaling(
-            A, B, dtype, workspace, out, grad,
-            accumulate, layout, bias, use_bias)
+            A, B, workspace, out, grad, accumulate, layout, bias, use_bias)
 
     empty_tensor = torch.Tensor()
 
@@ -250,7 +249,6 @@ def gemm(
 def fp8_gemm_current_scaling(
     A: torch.Tensor,
     B: torch.Tensor,
-    dtype: torch.dtype,
     workspace: torch.Tensor,
     out: torch.Tensor,
     grad: bool = False,
@@ -261,21 +259,21 @@ def fp8_gemm_current_scaling(
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Non FP8 GEMM."""
 
-    transa = layout[0] == "T"
-    transb = layout[1] == "T"
     empty_tensor = torch.Tensor()
     fp8_index = -1 # dummy index
 
     if grad and use_bias:
-        grad_bias = torch.empty(B.shape[1], dtype=out.dtype, device="cuda")
+        # Unfused bgrad
+        grad_bias = B.sum(0).squeeze(0)
     else:
         grad_bias = empty_tensor
 
-    bias = bias if use_bias else empty_tensor
+    A = A.t().contiguous() if layout[0] == "N" else A
+    B = B.t().contiguous() if layout[1] == "T" else B
 
-    assert A.dtype == dtype and B.dtype == dtype, \
-        f'Expected dtype={dtype}, but found A.dtype={A.dtype} and B.dtype={B.dtype}'
-    input_dtype = TE_DType[dtype]
+    bias = bias if (use_bias and bias is not None) else empty_tensor
+
+    input_dtype = TE_DType[A.dtype]
     output_dtype = TE_DType[out.dtype]
     if use_bias:
         bias_dtype = TE_DType[grad_bias.dtype] if grad else TE_DType[bias.dtype]
@@ -287,20 +285,20 @@ def fp8_gemm_current_scaling(
         empty_tensor,
         fp8_index,
         input_dtype,
-        transa,
+        True,  # transa
         B,
         empty_tensor,
         fp8_index,
         input_dtype,
-        transb,
+        False,  # transb
         out,
         empty_tensor, # out_scale
         output_dtype,
         empty_tensor, # out_amax
-        grad_bias if grad else bias,
+        bias,
         bias_dtype,
         empty_tensor, # gelu_input
-        grad,
+        False, # grad
         workspace,
         workspace.shape[0],
         accumulate,
