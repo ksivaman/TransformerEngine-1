@@ -3,7 +3,9 @@
 # See LICENSE for license information.
 
 """Python interface for GEMM extensions"""
+import os
 from typing import Optional, Tuple, Union
+
 import torch
 import transformer_engine_extensions as tex
 from ..constants import TE_DType
@@ -152,8 +154,6 @@ def gemm(
     assert layout in ("TN", "NN", "NT"), f"GEMM layout {layout} not supported."
     transa = layout[0] == "T"
     transb = layout[1] == "T"
-    empty_tensor = torch.Tensor()
-    fp8_index = -1 # dummy index
 
     if out is None:
         out = torch.empty(
@@ -162,6 +162,19 @@ def gemm(
             dtype=dtype,
             device="cuda",
         )
+
+    # Optional current scaling FP8 recipe for debug mode.
+    if bool(int(os.getenv("NVTE_FP8_CURRENT_SCALING", "1"))):
+        assert ub_algo is None, "Userbuf unsupported with current scaling."
+        assert (
+            bool(int(os.getenv("NVTE_BIAS_GELU_NVFUSION", "1")))
+        ), "GEMM-gelu fusion not available for FP8."
+
+        return fp8_gemm_current_scaling(
+            A, B, dtype, workspace, out, grad,
+            accumulate, layout, bias, use_bias)
+
+    empty_tensor = torch.Tensor()
 
     if gelu and not grad:
         gelu_input = torch.empty_like(out, dtype=dtype)
@@ -187,12 +200,12 @@ def gemm(
     args = (
         A,
         empty_tensor,
-        fp8_index,
+        -1, # unused FP8 index
         input_dtype,
         transa,
         B,
         empty_tensor,
-        fp8_index,
+        -1, # unused FP8 index
         input_dtype,
         transb,
         out,
@@ -232,3 +245,66 @@ def gemm(
     _ = fn(*args)
 
     return out, grad_bias, gelu_input
+
+
+def fp8_gemm_current_scaling(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    dtype: torch.dtype,
+    workspace: torch.Tensor,
+    out: torch.Tensor,
+    grad: bool = False,
+    accumulate: bool = False,
+    layout: str = "TN",
+    bias: Optional[torch.Tensor] = None,
+    use_bias: bool = False,
+) -> Tuple[Union[torch.Tensor, None], ...]:
+    """Non FP8 GEMM."""
+
+    transa = layout[0] == "T"
+    transb = layout[1] == "T"
+    empty_tensor = torch.Tensor()
+    fp8_index = -1 # dummy index
+
+    if grad and use_bias:
+        grad_bias = torch.empty(B.shape[1], dtype=out.dtype, device="cuda")
+    else:
+        grad_bias = empty_tensor
+
+    bias = bias if use_bias else empty_tensor
+
+    assert A.dtype == dtype and B.dtype == dtype, \
+        f'Expected dtype={dtype}, but found A.dtype={A.dtype} and B.dtype={B.dtype}'
+    input_dtype = TE_DType[dtype]
+    output_dtype = TE_DType[out.dtype]
+    if use_bias:
+        bias_dtype = TE_DType[grad_bias.dtype] if grad else TE_DType[bias.dtype]
+    else:
+        bias_dtype = output_dtype
+
+    _ = torch.ops.tex_ts.te_gemm_ts(
+        A,
+        empty_tensor,
+        fp8_index,
+        input_dtype,
+        transa,
+        B,
+        empty_tensor,
+        fp8_index,
+        input_dtype,
+        transb,
+        out,
+        empty_tensor, # out_scale
+        output_dtype,
+        empty_tensor, # out_amax
+        grad_bias if grad else bias,
+        bias_dtype,
+        empty_tensor, # gelu_input
+        grad,
+        workspace,
+        workspace.shape[0],
+        accumulate,
+        False,  # use_split_accumulator
+    )
+
+    return out, grad_bias, empty_tensor
