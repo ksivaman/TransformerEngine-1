@@ -8,6 +8,9 @@ from typing import Optional, Tuple, Union
 
 import torch
 import transformer_engine_extensions as tex
+from transformer_engine.common.recipe import Format
+
+from ..fp8 import _default_sf_compute
 from ..constants import TE_DType
 from ..utils import assert_dim_for_fp8_exec
 
@@ -164,14 +167,16 @@ def gemm(
         )
 
     # Optional current scaling FP8 recipe for debug mode.
-    if bool(int(os.getenv("NVTE_FP8_CURRENT_SCALING", "1"))):
+    fp8_current_scaling_recipe = os.getenv("NVTE_FP8_CURRENT_SCALING_RECIPE", "")
+    if fp8_current_scaling_recipe in ["E4M3", "HYBRID"]:
         assert ub_algo is None, "Userbuf unsupported with current scaling."
         assert (
             bool(int(os.getenv("NVTE_BIAS_GELU_NVFUSION", "1")))
         ), "GEMM-gelu fusion not available for FP8."
 
         return fp8_gemm_current_scaling(
-            A, B, workspace, out, grad, accumulate, layout, bias, use_bias)
+            A, B, workspace, out, fp8_current_scaling_recipe,
+            grad, accumulate, layout, bias, use_bias)
 
     empty_tensor = torch.Tensor()
 
@@ -246,11 +251,33 @@ def gemm(
     return out, grad_bias, gelu_input
 
 
+def fp8_cast(tensor, recipe, grad_tensor, margin=0):
+    assert tensor.dtype in (torch.float, torch.float16, torch.bfloat16), "Unsupported tensor type."
+    assert tensor.is_cuda, "Must be a GPU tensor."
+
+    if recipe == "HYBRID" and grad_tensor:
+        fp8_dtype = tex.DType.kFloat8E5M2
+        fp8_max = Format.E5M2.value.max_fwd
+    else:
+        fp8_dtype = tex.DType.kFloat8E4M3
+        fp8_max = Format.E4M3.value.max_fwd
+
+    amax = torch.max(torch.abs(tensor)).float()
+    one = torch.ones(1, device="cuda")
+
+    scale = _default_sf_compute(amax, one, fp8_max, margin)
+    scale_inv = 1.0 / scale
+
+    fp8_tensor = tex.cast_to_fp8(tensor, scale, amax, scale_inv, fp8_dtype)
+    return fp8_tensor, fp8_dtype, scale_inv
+
+
 def fp8_gemm_current_scaling(
     A: torch.Tensor,
     B: torch.Tensor,
     workspace: torch.Tensor,
     out: torch.Tensor,
+    recipe: str,
     grad: bool = False,
     accumulate: bool = False,
     layout: str = "TN",
@@ -260,7 +287,6 @@ def fp8_gemm_current_scaling(
     """Non FP8 GEMM."""
 
     empty_tensor = torch.Tensor()
-    fp8_index = -1 # dummy index
 
     if grad and use_bias:
         # Unfused bgrad
@@ -273,23 +299,26 @@ def fp8_gemm_current_scaling(
 
     bias = bias if (use_bias and bias is not None) else empty_tensor
 
-    input_dtype = TE_DType[A.dtype]
     output_dtype = TE_DType[out.dtype]
     if use_bias:
         bias_dtype = TE_DType[grad_bias.dtype] if grad else TE_DType[bias.dtype]
     else:
         bias_dtype = output_dtype
 
+    # Prepare FP8.
+    A_fp8, A_dtype, A_scale_inv = fp8_cast(A, recipe, False)
+    B_fp8, B_dtype, B_scale_inv = fp8_cast(B, recipe, grad) # Only B is grad tensor
+
     _ = torch.ops.tex_ts.te_gemm_ts(
-        A,
-        empty_tensor,
-        fp8_index,
-        input_dtype,
+        A_fp8,
+        A_scale_inv,
+        0,
+        A_dtype,
         True,  # transa
-        B,
-        empty_tensor,
-        fp8_index,
-        input_dtype,
+        B_fp8,
+        B_scale_inv,
+        0,
+        B_dtype,
         False,  # transb
         out,
         empty_tensor, # out_scale
@@ -302,7 +331,7 @@ def fp8_gemm_current_scaling(
         workspace,
         workspace.shape[0],
         accumulate,
-        False,  # use_split_accumulator
+        grad,  # use_split_accumulator
     )
 
     return out, grad_bias, empty_tensor
