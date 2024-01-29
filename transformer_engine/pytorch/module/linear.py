@@ -3,6 +3,7 @@
 # See LICENSE for license information.
 
 """Linear API"""
+import os
 import warnings
 from typing import Union, Optional, Callable, Tuple, List, Dict, Any
 
@@ -40,11 +41,15 @@ from ..cpp_extensions import (
     gemm,
     fp8_cast_transpose_fused,
     cast_to_fp8,
+    fp8_gemm_experimental,
 )
 from ..constants import GemmParallelModes, dist_group_type
 from ..jit import no_torch_dynamo
 
 from ..float8_tensor import Float8Tensor
+
+if int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")):
+    print("Linear Layer: Dgrad in 16-bit Precision")
 
 __all__ = ["Linear"]
 
@@ -393,8 +398,8 @@ class _Linear(torch.autograd.Function):
             ub_algo = tex.UbufOverlapAlgo.SPLIT_PIPELINED_AG if ctx.ub_split_ag else None
             ub_algo = tex.UbufOverlapAlgo.ATOMIC_GEMM_AG if ctx.ub_atomic_gemm_ag else ub_algo
             if ctx.requires_dgrad:
-                if ctx.fp8:
-                    dgrad, _ = fp8_gemm(
+                if ctx.fp8 and (not int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")) or int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0")) or int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS", "0"))):
+                    dgrad, _ = fp8_gemm_experimental(
                         weight_t_fp8._data,
                         fwd_scale_inverses,
                         tex.FP8FwdTensors.GEMM1_WEIGHT,
@@ -408,6 +413,8 @@ class _Linear(torch.autograd.Function):
                         use_split_accumulator=_2X_ACC_DGRAD,
                         ub_algo=ub_algo,
                         ub=ctx.ub_obj_gradout if ctx.ub_split_ag or ctx.ub_atomic_gemm_ag else None,
+                        weights_bf16=weight,
+                        gradients_bf16=grad_output,
                     )
                 else:
                     dgrad, _, _ = gemm(

@@ -14,9 +14,155 @@ from ..fp8 import _default_sf_compute
 from ..constants import TE_DType
 from ..utils import assert_dim_for_fp8_exec
 
+print("NVTE_FP8_CURRENT_SCALING_RECIPE: ", os.getenv("NVTE_FP8_CURRENT_SCALING_RECIPE", ""))
+print("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS: ", os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0"))
+print("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS: ", os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS", "0"))
 
-__all__ = ['gemm', 'fp8_gemm']
 
+__all__ = ['gemm', 'fp8_gemm', 'fp8_gemm_experimental']
+
+
+def fp8_gemm_experimental(
+    A: torch.Tensor,
+    A_scale_inv: torch.Tensor,
+    A_fp8_tensor: Union[tex.FP8FwdTensors, tex.FP8BwdTensors],
+    A_dtype: tex.DType,
+    B: torch.Tensor,
+    B_scale_inv: torch.Tensor,
+    B_fp8_tensor: Union[tex.FP8FwdTensors, tex.FP8BwdTensors],
+    B_dtype: tex.DType,
+    out_dtype: torch.dtype,
+    workspace: torch.Tensor,
+    gelu: bool = False,
+    accumulate: bool = False,
+    out: Optional[torch.Tensor] = None,
+    out_index = None,
+    fp8_meta_tensor: tex.FP8TensorMeta = None,
+    bias: Optional[torch.Tensor] = None,
+    use_bias: bool = False,
+    use_split_accumulator: bool = False,
+    D_dtype: Optional[tex.DType] = None,
+    ub_algo: tex.UbufOverlapAlgo = None,
+    ub: Union[tex.UbufCommOverlap, tex.UbufP2PCommOverlap] = None,
+    extra_output_tensor: torch.Tensor = None,
+    weights_bf16: torch.Tensor = None,
+    gradients_bf16: torch.Tensor = None,
+) -> torch.Tensor:
+    """TN layout GEMM with fp8 inputs."""
+
+    assert ub_algo is None, "Userbuf unsupported with fp8 gemm experimental."
+    empty_tensor = torch.Tensor()
+    if D_dtype is not None and D_dtype in [tex.DType.kFloat8E4M3, tex.DType.kFloat8E5M2]:
+        assert fp8_meta_tensor is not None and out_index is not None
+    assert_dim_for_fp8_exec(A)
+    assert_dim_for_fp8_exec(B)
+
+    if out is None:
+        out = torch.empty(
+            B.shape[0],
+            A.shape[0],
+            dtype=out_dtype,
+            device="cuda",
+        )
+
+    # Use bfloat16 as default bias_dtype
+    bias_dtype = torch.bfloat16 if bias is None else bias.dtype
+    if gelu:
+        gelu_input = torch.empty_like(out, dtype=bias_dtype)
+    else:
+        gelu_input = empty_tensor
+    bias_dtype = TE_DType[bias_dtype]
+
+    out_dtype = TE_DType[out.dtype] if D_dtype is None else D_dtype
+
+
+    fp8_current_scaling_recipe = os.getenv("NVTE_FP8_CURRENT_SCALING_RECIPE", "")
+    fp8_current_scaling_gradients = int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0")) and (gradients_bf16 is not None)
+    fp8_current_scaling_weights = int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS", "0")) and (weights_bf16 is not None)
+
+    # DGRAD LAYOUT is "NN" in layernorm_linear and linear layers
+    if fp8_current_scaling_recipe in ["E4M3", "HYBRID"] and (fp8_current_scaling_gradients or fp8_current_scaling_weights):
+        assert (
+            bool(int(os.getenv("NVTE_BIAS_GELU_NVFUSION", "1")))
+        ), "GEMM-gelu fusion not available for FP8."
+
+        if fp8_current_scaling_weights:
+            # Layout is "NN" for dgrad
+            #print("WEIGHTS CURRENT SCALING ON")
+            weights_bf16_t = weights_bf16.t().contiguous()
+            weights_fp8, weights_dtype, weights_scale_inv = fp8_cast(weights_bf16_t, fp8_current_scaling_recipe, False)
+            weights_fp8_tensor = 0
+        else:
+            #print("WEIGHTS CURRENT SCALING OFF")
+            weights_fp8 = A
+            weights_dtype = A_dtype
+            weights_scale_inv = A_scale_inv
+            weights_fp8_tensor = A_fp8_tensor
+
+        if fp8_current_scaling_gradients:
+            # Layout is NN for dgrad
+            # Prepare FP8.
+            #print("GRADIENTS CURRENT SCALING ON")
+            gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast(gradients_bf16, fp8_current_scaling_recipe, True) # Only B is grad tensor
+            gradients_fp8_tensor = 0
+        else:
+            #print("GRADIENTS CURRENT SCALING OFF")
+            gradients_fp8 = B
+            gradients_dtype = B_dtype
+            gradients_scale_inv = B_scale_inv
+            gradients_fp8_tensor = B_fp8_tensor
+
+        args = (
+            weights_fp8,
+            weights_scale_inv,
+            weights_fp8_tensor,
+            weights_dtype,
+            True,  # transa
+            gradients_fp8,
+            gradients_scale_inv,
+            gradients_fp8_tensor,
+            gradients_dtype,
+            False,  # transb
+            out,
+            empty_tensor if out_index is None else fp8_meta_tensor.scale[out_index],
+            out_dtype,
+            empty_tensor if out_index is None else fp8_meta_tensor.amax_history[0][out_index],
+            bias if use_bias else empty_tensor,
+            bias_dtype,
+            gelu_input,
+            False, # grad
+            workspace,
+            workspace.shape[0],
+            accumulate,
+            use_split_accumulator)
+    else:
+        args = (
+            A,
+            A_scale_inv,
+            A_fp8_tensor,
+            A_dtype,
+            True,  # transa
+            B,
+            B_scale_inv,
+            B_fp8_tensor,
+            B_dtype,
+            False,  # transb
+            out,
+            empty_tensor if out_index is None else fp8_meta_tensor.scale[out_index],
+            out_dtype,
+            empty_tensor if out_index is None else fp8_meta_tensor.amax_history[0][out_index],
+            bias if use_bias else empty_tensor,
+            bias_dtype,
+            gelu_input,  # this is pre_gelu_out
+            False,  # grad
+            workspace,
+            workspace.shape[0],
+            accumulate,
+            use_split_accumulator)
+    fn = torch.ops.tex_ts.te_gemm_ts
+    _ = fn(*args)
+
+    return out, gelu_input
 
 def fp8_gemm(
     A: torch.Tensor,

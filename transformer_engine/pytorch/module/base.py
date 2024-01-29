@@ -676,6 +676,12 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
                 grad_output_c = ctx.ub_obj_gradout.get_ubuf_output(1)
                 grad_output_t = None
 
+            if int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")) or int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0")):
+                assert (
+                    not ub_overlap_ag
+                ), "override_linear_precision.wgrad not supported with UB AG overlap"
+                grad_output_mat, _ = gather_along_first_dim(grad_output_mat, ctx.tp_group)
+
             return grad_output_mat, grad_output_c, grad_output_t, grad_bias
 
         # FP8 case without gather: cast, transpose, bgrad fused
