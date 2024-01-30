@@ -1146,7 +1146,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
         ub_split_ag: bool = False,
         ub_atomic_gemm_ag: bool = False,
     ) -> None:
-        super().__init__()
+        super().__init__(num_gemms=2)
 
         params_dtype = torch.get_default_dtype() if params_dtype is None else params_dtype
         self.fuse_wgrad_accumulation = fuse_wgrad_accumulation
@@ -1263,7 +1263,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
             self.fc2_bias = torch.Tensor().to(dtype=params_dtype, device=device)
 
         if self.primary_weights_in_fp8:
-            self.init_fp8_metadata(num_gemms=2)
+            self.init_fp8_metadata()
             self.fp8_meta["update_amax_and_scale_fwd"] = True
 
         self.reset_parameters(defer_init=(device == 'meta'))
@@ -1372,7 +1372,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
                                produced)
         """
 
-        with self.prepare_forward(inp, is_first_microbatch, num_gemms=2) as inp:
+        with self.prepare_forward(inp, is_first_microbatch) as inp:
             assert self.fp8 or not self.primary_weights_in_fp8, \
                    "Need to run inside fp8_autocast region when weights are stored in FP8."
             # Fetch the fp8 weights placeholders (for linear/gemm)

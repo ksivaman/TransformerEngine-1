@@ -1235,7 +1235,7 @@ class DPA_FP8(TransformerEngineBaseModule):
         self,
         config,
         params_dtype: torch.dtype = torch.float32):
-        super().__init__()
+        super().__init__(num_gemms=3)
         self.p_dropout = config.dropout_p
         self.h = config.num_heads
         self.hidden_size = config.hidden_size
@@ -1269,7 +1269,7 @@ class DPA_FP8(TransformerEngineBaseModule):
         self, inp: torch.Tensor,
         cu_seqlens, max_s,
     ) -> torch.Tensor:
-        with self.prepare_forward(inp, None, num_gemms=3) as inp:
+        with self.prepare_forward(inp, None) as inp:
             out = _dpa_fp8.apply(
                 inp,
                 self.qkv_weight,

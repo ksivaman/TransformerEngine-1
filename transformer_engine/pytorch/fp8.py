@@ -75,6 +75,9 @@ class FP8GlobalStateManager:
     dp_amax_reduce_interval = None
     dp_amax_reduce_forward_idx = 0
     dp_amax_reduce_backward_idx = 0
+    num_fp8_modules = 0
+    amax_lengths_per_module_pos = {}
+    dummy_amaxes = {}
 
     @classmethod
     def reset(cls) -> None:
@@ -83,6 +86,7 @@ class FP8GlobalStateManager:
         cls.FP8_CALIBRATION = False
         cls.FP8_RECIPE = None
         cls.FP8_DISTRIBUTED_GROUP = None
+        cls.FP8_PARAMETERS = False
         cls.IS_FIRST_FP8_MODULE = False
         cls.FP8_AUTOCAST_COUNTER = 0
         cls.FP8_CURRENT_CONTEXT_ID = 0
@@ -98,6 +102,18 @@ class FP8GlobalStateManager:
         cls.dp_amax_reduce_interval = None
         cls.dp_amax_reduce_forward_idx = 0
         cls.dp_amax_reduce_backward_idx = 0
+        cls.num_fp8_modules = 0
+        cls.amax_lengths_per_module_pos = {}
+        cls.dummy_amaxes = {}
+
+    @classmethod
+    def new_fp8_module(cls, num_gemms: int) -> int:
+        """Returns a global position that must be used to index the global FP8 buffer."""
+        cls.amax_lengths_per_module_pos[cls.num_fp8_modules] = (
+            num_gemms * 3, num_gemms * 2
+        )
+        cls.num_fp8_modules += 1
+        return cls.num_fp8_modules - 1
 
     @classmethod
     def is_fp8_available(cls) -> Tuple[bool, str]:
@@ -168,9 +184,8 @@ class FP8GlobalStateManager:
     @staticmethod
     def get_amax_buffer_key(fp8_meta: Dict[str, Any], forward: bool = True) -> str:
         """Return a key in `_global_fp8_buffer` for the AMAX storage."""
-        if forward:
-            return f"FWD_AMAX_{fp8_meta['autocast_id_fwd']}"
-        return f"BWD_AMAX_{fp8_meta['autocast_id_bwd']}"
+        prefix = 'FWD' if forward else 'BWD'
+        return f"{prefix}_AMAX_{fp8_meta[FP8GlobalStateManager.get_autocast_key(forward)]}"
 
     @classmethod
     def get_amax_reduce_handle_fwd(cls) -> Union[bool, None]:
@@ -184,27 +199,31 @@ class FP8GlobalStateManager:
 
     @classmethod
     def add_amax_to_global_buffer(cls, fp8_meta: Dict[str, Any], forward: bool = True) -> None:
-        """Append 1D tensor `amax` to global buffer."""
+        """
+        Append 1D tensor `amax` to global buffer. For expert-like models where certain modules
+        are skipped during forward, the corresponding entries in the global fp8 buffer will
+        remain `None` which will later be populated during the `global_amax_reduction` call.
+        This design allows alignment of modules across devices and ensures uneven expert
+        assignments per device.
+        """
         buffer_key = cls.get_amax_buffer_key(fp8_meta, forward=forward)
         fp8_meta_tensor_key = cls.get_meta_tensor_key(forward=forward)
         buffer_position_key = cls.get_buffer_position_key(forward=forward)
 
+        # Populate the new buffer of correct length.
         if buffer_key not in cls.global_fp8_buffer:
-            cls.global_fp8_buffer[buffer_key] = [fp8_meta[fp8_meta_tensor_key].amax_history[0]]
-        else:
-            cls.global_fp8_buffer[buffer_key].append(
-                fp8_meta[fp8_meta_tensor_key].amax_history[0]
-            )
-
-        if buffer_position_key not in fp8_meta:
-            fp8_meta[buffer_position_key] = len(cls.global_fp8_buffer[buffer_key]) - 1
+            cls.global_fp8_buffer[buffer_key] = [None for _ in range(cls.num_fp8_modules)]
 
         # Catch incorrect fp8_autocast usage.
-        assert fp8_meta[buffer_position_key] == len(cls.global_fp8_buffer[buffer_key]) - 1, \
+        assert cls.global_fp8_buffer[buffer_key][fp8_meta[buffer_position_key]] is None, \
             "Same module is being invoked more than once inside an `fp8_autocast` " \
             "region when using FP8 with amax reduction. This behavior is currently" \
             " unsupported. For more details and correct usage, please see " \
             "https://github.com/NVIDIA/TransformerEngine/pull/93."
+
+        # Add current module amax to correct position.
+        cls.global_fp8_buffer[buffer_key][fp8_meta[buffer_position_key]] = (
+            fp8_meta[fp8_meta_tensor_key].amax_history[0])
 
     @classmethod
     def copy_amax_from_global_buffer(
@@ -213,7 +232,9 @@ class FP8GlobalStateManager:
         """Populate current amax with the correct location from buffer."""
         fp8_meta_tensor_key = cls.get_meta_tensor_key(forward=forward)
         buffer_position_key = cls.get_buffer_position_key(forward=forward)
-        if buffer_position_key not in fp8_meta:
+
+        if (FP8GlobalStateManager.get_autocast_key(forward) not in fp8_meta
+            or buffer_position_key not in fp8_meta):
             return
 
         amax_buffer_key = cls.get_amax_buffer_key(fp8_meta, forward=forward)
@@ -340,6 +361,16 @@ class FP8GlobalStateManager:
         return None
 
     @classmethod
+    def get_dummy_amax(cls, size: int) -> torch.Tensor:
+        """
+        Returns an amax tensor of given size.
+        Cache small tensors to avoid overheads.
+        """
+        if size not in cls.dummy_amaxes:
+            cls.dummy_amaxes[size] = torch.zeros(size, device="cuda")
+        return cls.dummy_amaxes[size]
+
+    @classmethod
     def global_amax_reduction(
         cls,
         fp8_meta: Dict[str, Any],
@@ -384,6 +415,12 @@ class FP8GlobalStateManager:
                 reduce_group = tp_group
             else:
                 return None
+
+        for i, amax in enumerate(cls.global_fp8_buffer[amax_buffer_key]):
+            if amax is None:
+                cls.global_fp8_buffer[amax_buffer_key][i] = cls.get_dummy_amax(
+                    fp8_meta["num_gemms"] * 3 if forward else fp8_meta["num_gemms"] * 2
+                )
 
         chunk_sizes = [x.numel() for x in cls.global_fp8_buffer[amax_buffer_key]]
         contiguous_amax = torch.cat(cls.global_fp8_buffer[amax_buffer_key])

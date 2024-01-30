@@ -216,7 +216,7 @@ def get_ub(name: str):
 class TransformerEngineBaseModule(torch.nn.Module, ABC):
     """Base TE module."""
 
-    def __init__(self) -> None:
+    def __init__(self, num_gemms: int = 1) -> None:
         super().__init__()
         assert torch.cuda.is_available(), "TransformerEngine needs CUDA."
         self.fp8_initialized = False
@@ -235,6 +235,10 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         self.fp8_meta["async_amax_reduction"] = bool(
             int(os.getenv("NVTE_ASYNC_AMAX_REDUCTION", "0"))
         )
+        self.fp8_meta["global_fp8_buffer_pos_fwd"] = FP8GlobalStateManager.new_fp8_module(num_gemms)
+        self.fp8_meta["global_fp8_buffer_pos_bwd"] = self.fp8_meta["global_fp8_buffer_pos_fwd"]
+        self.fp8_meta["num_gemms"] = num_gemms
+
         self.param_init_meta = {}
         self.primary_weights_in_fp8 = FP8GlobalStateManager.with_fp8_parameters()
 
@@ -456,7 +460,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
 
     # This routine is shared across FP8 and FP8_calibration paths so should not actually
     # assume FP8 execution.
-    def init_fp8_metadata(self, num_gemms: int = 1) -> None:
+    def init_fp8_metadata(self) -> None:
         """Initialize fp8 related metadata and tensors during fprop."""
         self.fp8_parameters = FP8GlobalStateManager.with_fp8_parameters()
         self.fp8 = FP8GlobalStateManager.is_fp8_enabled()
@@ -464,7 +468,6 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         self.fp8_meta["fp8_checkpoint"] = self.fp8 or self.fp8_calibration
 
         if self.fp8_parameters and not self.fp8_initialized:
-            self.fp8_meta["num_gemms"] = num_gemms
             self.init_fp8_meta_tensors()
 
         if self.fp8 or self.fp8_calibration:
@@ -475,7 +478,6 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
 
             # Set FP8, recipe, and other FP8 metadata
             self.fp8_meta["recipe"] = FP8GlobalStateManager.get_fp8_recipe()
-            self.fp8_meta["num_gemms"] = num_gemms
             self.fp8_meta["fp8_group"] = FP8GlobalStateManager.get_fp8_group()
 
             # Set FP8_MAX per tensor according to recipe
@@ -495,7 +497,6 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         self,
         inp: torch.Tensor,
         is_first_microbatch: Union[bool, None],
-        num_gemms: int = 1,
     ) -> Generator[torch.Tensor, None, None]:
         """Checks and prep for FWD.
         The context manager is needed because there isn't a way for a module to know
@@ -514,7 +515,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
                 assert self.tp_group_initialized, "TP group not initialized."
 
             self.set_activation_dtype(inp)
-            self.init_fp8_metadata(num_gemms=num_gemms)
+            self.init_fp8_metadata()
 
             # Create persistent tensors for fp8 weights and their transposes
             # only when fp8 weight caching is used.
