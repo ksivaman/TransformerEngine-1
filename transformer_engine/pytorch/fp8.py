@@ -578,13 +578,14 @@ def fp8_autocast(
 def _update_amax_history(amax_history: torch.Tensor) -> torch.Tensor:
     """Update amax history and set next amax to zero."""
     if amax_history.shape[0] > 1:
-        amax_history = torch.roll(amax_history, -1, 0)
+        new_amax_history = torch.roll(amax_history, -1, 0)
+        amax_history.copy_(new_amax_history)
     amax_history[0].fill_(0.0)
     return amax_history
 
 
 @torch.jit.script
-def _default_get_amax(
+def _default_get_amax_and_update_history(
     amax_history: torch.Tensor,
     amax_compute_algo: str,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -609,7 +610,8 @@ def _default_sf_compute(
     sf = (fp8_max / amax) / (2 ** margin)
     sf = torch.where(amax > 0.0, sf, scale)
     sf = torch.where(torch.isfinite(amax), sf, scale)
-    return sf
+    scale.copy_(sf)
+    return scale
 
 
 @jit_fuser
@@ -621,8 +623,10 @@ def _compute_scaling_factor_inverse(
 ) -> torch.Tensor:
     """Compute inverse of scaling factor."""
     if update_weight_scale_inv:
-        return 1.0 / scale
-    return torch.where(non_weight_mask, 1.0 / scale, scale_inv)
+        scale_inv.copy_(1.0 / scale)
+    else:
+        scale_inv.copy_(torch.where(non_weight_mask, 1.0 / scale, scale_inv))
+    return scale_inv
 
 
 @torch.jit.script
@@ -639,7 +643,7 @@ def _fused_amax_and_scale_update(
     """Amax to scale conversion."""
 
     # Get amax from history.
-    amax_history, amax = _default_get_amax(
+    amax_history, amax = _default_get_amax_and_update_history(
         amax_history,
         amax_compute_algo,
     )
@@ -663,7 +667,7 @@ def _fused_amax_and_scale_update(
     return amax_history, scale, scale_inv
 
 
-def _compute_amax(
+def _compute_amax_and_update_history(
     amax_history: torch.Tensor,
     recipe: DelayedScaling,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -673,7 +677,7 @@ def _compute_amax(
         amax = recipe.amax_compute_algo(amax_history)
         amax_history = _update_amax_history(amax_history)
         return amax_history, amax
-    return _default_get_amax(
+    return _default_get_amax_and_update_history(
         amax_history,
         recipe.amax_compute_algo,
     )
@@ -724,7 +728,7 @@ def amax_and_scale_update(
             update_weight_scale_inv,
         )
     else:
-        fp8_meta[fp8_meta_tensor_key].amax_history, amax = _compute_amax(
+        fp8_meta[fp8_meta_tensor_key].amax_history, amax = _compute_amax_and_update_history(
             fp8_meta[fp8_meta_tensor_key].amax_history,
             fp8_meta["recipe"],
         )
