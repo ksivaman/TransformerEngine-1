@@ -440,8 +440,7 @@ class Float8Tensor(torch.Tensor):
         dim0: int = 0,
         dim1: int = 1,
         *,
-        update_cache: str | bool = "reuse_only",
-        noop: Optional[torch.Tensor] = None,
+        cache: str | bool = False,
     ) -> torch.Tensor:
         """
         Swap tensor dimensions
@@ -455,28 +454,16 @@ class Float8Tensor(torch.Tensor):
               The first dimension to be transposed
         dim1: int, default = 1
               The second dimension to be transposed
-        update_cache: str or bool, default = "reuse_only"
-                      Memoization behavior. Options are
-                      "reuse_only"/`False` (reuse cached value if
-                      available, otherwise calculate transpose without
-                      caching), "force"/`True` (calculate transpose
-                      and cache), "lazy" (reuse cached value if
-                      available, otherwise calculate transpose and
-                      cache if possible). Caching is only supported
-                      for basic 2D transposes and the cache is reset
-                      after any in-place operations.
-
+        cache: str or bool, default = False
+               `False`   : Allocate and return transposed tensor.
+               `True`    : Populate and return cache (:attr:`_transpose`).
+               `'reuse'` : Return cache (:attr:`_transpose`), throws an error if empty.
         """
 
-        # Check caching mode
-        if not isinstance(update_cache, str):
-            update_cache = "force" if update_cache else "reuse_only"
-        if update_cache not in ("force", "reuse_only", "lazy"):
-            raise ValueError(
-                "Supported values for update_cache are "
-                '"force" (True), "reuse_only" (False), "lazy" '
-                f"(got {update_cache})"
-            )
+        # Check caching mode.
+        assert (
+            cache in (True, False, "reuse")
+        ), f"Unsupported value '{cache}' for `cache`."
 
         # Handle non-2D transposes
         if -self.dim() <= dim0 < 0:
@@ -484,32 +471,33 @@ class Float8Tensor(torch.Tensor):
         if -self.dim() <= dim1 < 0:
             dim1 += self.dim()
         if self.dim() != 2 or dim0 == dim1:
-            if update_cache == "force":
-                raise ValueError(
-                    "Transpose caching is only supported for basic 2D transposes "
-                    f"(ndims={self.dim()}, dim0={dim0}, dim1={dim1})"
-                )
+            assert cache is False, (
+                "Transpose caching is only supported for basic 2D transposes "
+                f"(ndims={self.dim()}, dim0={dim0}, dim1={dim1})")
             return super().transpose(dim0, dim1)
 
-        # Clear cache if needed
-        if update_cache == "force":
-            self._transpose = None
-
-        # Compute transpose if needed
-        out = self._transpose
-        if out is None:
-            out = Float8Tensor.make_like(
+        if cache == "reuse":
+            assert self._transpose is not None, "Empty cache cannot be reused."
+            return self._transpose
+        if cache is False or self._transpose is None:
+            _transpose = Float8Tensor.make_like(
                 self,
                 data=tex.fp8_transpose(
                     self._data.contiguous(),
                     self._fp8_dtype,
                 ),
             )
+            if cache is False:
+                return _transpose
+            self._transpose = _transpose
+            return self._transpose
 
-        # Update cache if needed
-        if update_cache in ("force", "lazy"):
-            self._transpose = out
-        return out
+        tex.fp8_transpose_noalloc(
+            self._data.contiguous(),
+            self._transpose._data,
+            self._fp8_dtype,
+        )
+        return self._transpose
 
     @torch.no_grad()
     def reset_fp8_meta_scale_inv(self) -> None:
