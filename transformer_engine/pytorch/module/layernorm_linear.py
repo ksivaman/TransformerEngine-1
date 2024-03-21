@@ -418,6 +418,8 @@ class _LayerNormLinear(torch.autograd.Function):
                         D_dtype = out_te_type,
                         weights_bf16 = weight,
                         gradients_bf16 = grad_output,
+                        fp8_meta_info=ctx.fp8_meta,
+                        layer_name="layernorm_linear",
                     )
                     clear_tensor_data(grad_output_c)
                 else:

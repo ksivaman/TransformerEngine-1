@@ -415,6 +415,8 @@ class _Linear(torch.autograd.Function):
                         ub=ctx.ub_obj_gradout if ctx.ub_split_ag or ctx.ub_atomic_gemm_ag else None,
                         weights_bf16=weight,
                         gradients_bf16=grad_output,
+                        fp8_meta_info=ctx.fp8_meta,
+                        layer_name="linear",
                     )
                 else:
                     dgrad, _, _ = gemm(

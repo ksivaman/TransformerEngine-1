@@ -17,8 +17,17 @@ from ..utils import assert_dim_for_fp8_exec
 print("NVTE_FP8_CURRENT_SCALING_RECIPE: ", os.getenv("NVTE_FP8_CURRENT_SCALING_RECIPE", ""))
 print("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS: ", os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0"))
 print("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS: ", os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS", "0"))
+print("NVTE_DEBUG_AMAX_CORRECTION: ", os.getenv("NVTE_DEBUG_AMAX_CORRECTION", "0"))
+print("NVTE_DEBUG_AMAX_CORRECTION_SATURATION: ", os.getenv("NVTE_DEBUG_AMAX_CORRECTION_SATURATION", "0"))
+print("NVTE_DEBUG_FP8_MARGIN" , os.getenv("NVTE_DEBUG_FP8_MARGIN", "0"))
 
+import random
+print("NVTE_DEBUG_FP8_MANTISSA_SWITCH" , os.getenv("NVTE_DEBUG_FP8_MANTISSA_SWITCH", "0"))
 
+margin_printed = False
+layernorm_linear_printed = False
+linear_printed = False
+mantissa_switch_printed = False
 __all__ = ['gemm', 'fp8_gemm', 'fp8_gemm_experimental']
 
 
@@ -47,9 +56,13 @@ def fp8_gemm_experimental(
     extra_output_tensor: torch.Tensor = None,
     weights_bf16: torch.Tensor = None,
     gradients_bf16: torch.Tensor = None,
+    fp8_meta_info = None,
+    layer_name = None,
 ) -> torch.Tensor:
     """TN layout GEMM with fp8 inputs."""
-
+    
+    global layernorm_linear_printed
+    global linear_printed
     assert ub_algo is None, "Userbuf unsupported with fp8 gemm experimental."
     empty_tensor = torch.Tensor()
     if D_dtype is not None and D_dtype in [tex.DType.kFloat8E4M3, tex.DType.kFloat8E5M2]:
@@ -79,7 +92,9 @@ def fp8_gemm_experimental(
     fp8_current_scaling_recipe = os.getenv("NVTE_FP8_CURRENT_SCALING_RECIPE", "")
     fp8_current_scaling_gradients = int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0")) and (gradients_bf16 is not None)
     fp8_current_scaling_weights = int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_WEIGHTS", "0")) and (weights_bf16 is not None)
-
+    fp8_amax_correction = int(os.getenv("NVTE_DEBUG_AMAX_CORRECTION", "0"))
+    fp8_amax_correction_saturation = int(os.getenv("NVTE_DEBUG_AMAX_CORRECTION_SATURATION", "0"))
+    fp8_mantissa_switch = int(os.getenv("NVTE_DEBUG_FP8_MANTISSA_SWITCH", "0"))
     # DGRAD LAYOUT is "NN" in layernorm_linear and linear layers
     if fp8_current_scaling_recipe in ["E4M3", "HYBRID"] and (fp8_current_scaling_gradients or fp8_current_scaling_weights):
         assert (
@@ -103,8 +118,43 @@ def fp8_gemm_experimental(
             # Layout is NN for dgrad
             # Prepare FP8.
             #print("GRADIENTS CURRENT SCALING ON")
-            gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast(gradients_bf16, fp8_current_scaling_recipe, True) # Only B is grad tensor
-            gradients_fp8_tensor = 0
+            if not layernorm_linear_printed and layer_name == "layernorm_linear":
+                print("CURRENT SCALING DGRAD GRADIENT SELECTED FOR LAYERNORM LINEAR")
+                layernorm_linear_printed = True
+            if not linear_printed and layer_name == "linear":
+                print("CURRENT SCALING DGRAD GRADIENT SELECTED FOR LINEAR")
+                linear_printed = True
+            if fp8_amax_correction > 0:
+                curr_amax = torch.max(torch.abs(gradients_bf16)).float()
+                hist_amax = torch.max(fp8_meta_info['scaling_bwd'].amax_history[1:], dim=0).values[0]
+                #print("Base Size: ", torch.max(fp8_meta_info['scaling_bwd'].amax_history, dim=0))
+                #print("Leave First: ", torch.max(fp8_meta_info['scaling_bwd'].amax_history[1:], dim=0))
+                #print(f"CURR AMAX={curr_amax}, HIST AMAX={hist_amax}")
+                if (hist_amax / curr_amax) >= (2**fp8_amax_correction):
+                    #print(f"Using Current Amax: hist_amax={hist_amax}, curr_amax={curr_amax}, Correction Factor Threshold={2**fp8_amax_correction}")
+                    gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast(gradients_bf16, fp8_current_scaling_recipe, True) # Only B is grad tensor
+                    gradients_fp8_tensor = 0
+                else:
+                    gradients_fp8 = B
+                    gradients_dtype = B_dtype
+                    gradients_scale_inv = B_scale_inv
+                    gradients_fp8_tensor = B_fp8_tensor
+            elif fp8_amax_correction_saturation > 0:
+                curr_amax = torch.max(torch.abs(gradients_bf16)).float()
+                hist_amax = torch.max(fp8_meta_info['scaling_bwd'].amax_history, dim=0).values[0]
+                #print(f"CURR AMAX={curr_amax}, HIST AMAX={hist_amax}")
+                if curr_amax > hist_amax:
+                    print(f"Using Current Amax: hist_amax={hist_amax}, curr_amax={curr_amax}, Correction for Saturation")
+                    gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast(gradients_bf16, fp8_current_scaling_recipe, True) # Only B is grad tensor
+                    gradients_fp8_tensor = 0
+                else:
+                    gradients_fp8 = B
+                    gradients_dtype = B_dtype
+                    gradients_scale_inv = B_scale_inv
+                    gradients_fp8_tensor = B_fp8_tensor    
+            else:
+                gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast(gradients_bf16, fp8_current_scaling_recipe, True) # Only B is grad tensor
+                gradients_fp8_tensor = 0
         else:
             #print("GRADIENTS CURRENT SCALING OFF")
             gradients_fp8 = B
@@ -117,6 +167,43 @@ def fp8_gemm_experimental(
             weights_scale_inv,
             weights_fp8_tensor,
             weights_dtype,
+            True,  # transa
+            gradients_fp8,
+            gradients_scale_inv,
+            gradients_fp8_tensor,
+            gradients_dtype,
+            False,  # transb
+            out,
+            empty_tensor if out_index is None else fp8_meta_tensor.scale[out_index],
+            out_dtype,
+            empty_tensor if out_index is None else fp8_meta_tensor.amax_history[0][out_index],
+            bias if use_bias else empty_tensor,
+            bias_dtype,
+            gelu_input,
+            False, # grad
+            workspace,
+            workspace.shape[0],
+            accumulate,
+            use_split_accumulator)
+    elif fp8_mantissa_switch:
+        global mantissa_switch_printed
+        if not mantissa_switch_printed:
+            print(F"MANTISSA SWITCH ENABLED FOR DGRAD")
+            mantissa_switch_printed = True
+        if not layernorm_linear_printed and layer_name == "layernorm_linear":
+            print("MANTISSA SWITCH SELECTED FOR LAYERNORM LINEAR")
+            layernorm_linear_printed = True
+        if not linear_printed and layer_name == "linear":
+            print("MANTISSA SWITCH SELECTED FOR LINEAR")
+            linear_printed = True
+        hist_amax = torch.max(fp8_meta_info['scaling_bwd'].amax_history[1:], dim=0).values[0]
+        gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast_mantissa_switch(gradients_bf16, fp8_current_scaling_recipe, True, hist_amax) # Only B is grad tenso
+        gradients_fp8_tensor = 0
+        args = (
+            A,
+            A_scale_inv,
+            A_fp8_tensor,
+            A_dtype,
             True,  # transa
             gradients_fp8,
             gradients_scale_inv,
@@ -400,6 +487,7 @@ def gemm(
 def fp8_cast(tensor, recipe, grad_tensor, margin=0):
     assert tensor.dtype in (torch.float, torch.float16, torch.bfloat16), "Unsupported tensor type."
     assert tensor.is_cuda, "Must be a GPU tensor."
+    global margin_printed
 
     if recipe == "HYBRID" and grad_tensor:
         fp8_dtype = tex.DType.kFloat8E5M2
@@ -408,6 +496,12 @@ def fp8_cast(tensor, recipe, grad_tensor, margin=0):
         fp8_dtype = tex.DType.kFloat8E4M3
         fp8_max = Format.E4M3.value.max_fwd
 
+    if (margin == 0) and (int(os.getenv("NVTE_DEBUG_FP8_MARGIN", "0")) != 0):
+        margin = int(os.getenv("NVTE_DEBUG_FP8_MARGIN", "0"))
+        if not margin_printed:
+            print(F"MARGIN SETTING CALLED = {margin}")
+            margin_printed = True
+
     amax = torch.max(torch.abs(tensor)).float()
     one = torch.ones(1, device="cuda")
 
@@ -415,6 +509,51 @@ def fp8_cast(tensor, recipe, grad_tensor, margin=0):
     scale_inv = 1.0 / scale
 
     fp8_tensor = tex.cast_to_fp8(tensor, scale, amax, scale_inv, fp8_dtype)
+    return fp8_tensor, fp8_dtype, scale_inv
+
+def sf_mantissa_switch_compute(
+    amax: torch.Tensor,
+    scale: torch.Tensor,
+    fp8_max: float,
+    margin: int,
+) -> torch.Tensor:
+    """Default function to convert amax to scaling factor."""
+    # sf = (fp8_max / amax) / (2 ** margin)
+    # sf = torch.where(amax > 0.0, sf, scale)
+    # sf = torch.where(torch.isfinite(amax), sf, scale)
+    exp = torch.floor(torch.log2(fp8_max / amax)) - margin
+    #print(f"amax_shape: {amax.shape}, exp: {exp}")
+    sf = torch.round(torch.pow(2, torch.abs(exp)))
+    sf = torch.where(exp < 0, 1 / sf, sf)
+    #cnt = sf.numel()
+    #for i in range(cnt):
+    extra_sf = random.choice([1.     , 0.96875, 0.9375 , 0.90625, 0.875  , 0.84375, 0.8125 ,
+        0.78125, 0.75   , 0.71875, 0.6875 , 0.65625, 0.625  , 0.59375,
+        0.5625 , 0.53125])
+    sf = sf * extra_sf
+    #sf[i] = sf[i] * extra_sf
+    sf = torch.where(amax > 0.0, sf, scale)
+    sf = torch.where(torch.isfinite(amax), sf, scale)
+    return sf
+
+
+def fp8_cast_mantissa_switch(tensor, recipe, grad_tensor, hist_amax, margin=0):
+    assert tensor.dtype in (torch.float, torch.float16, torch.bfloat16), "Unsupported tensor type."
+    assert tensor.is_cuda, "Must be a GPU tensor."
+
+    if recipe == "HYBRID" and grad_tensor:
+        fp8_dtype = tex.DType.kFloat8E5M2
+        fp8_max = Format.E5M2.value.max_fwd
+    else:
+        fp8_dtype = tex.DType.kFloat8E4M3
+        fp8_max = Format.E4M3.value.max_fwd
+
+    one = torch.ones(1, device="cuda")
+
+    scale = sf_mantissa_switch_compute(hist_amax, one, fp8_max, margin)
+    scale_inv = 1.0 / scale
+
+    fp8_tensor = tex.cast_to_fp8(tensor, scale, hist_amax, scale_inv, fp8_dtype)
     return fp8_tensor, fp8_dtype, scale_inv
 
 

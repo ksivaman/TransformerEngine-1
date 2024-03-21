@@ -676,7 +676,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
                 grad_output_c = ctx.ub_obj_gradout.get_ubuf_output(1)
                 grad_output_t = None
 
-            if int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")) or int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0")):
+            if int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")) or int(os.getenv("NVTE_DEBUG_DGRAD_CURR_AMAX_GRADIENTS", "0")) or int(os.getenv("NVTE_DEBUG_FP8_MANTISSA_SWITCH", "0")):
                 assert (
                     not ub_overlap_ag
                 ), "override_linear_precision.wgrad not supported with UB AG overlap"
