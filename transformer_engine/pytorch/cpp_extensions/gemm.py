@@ -185,10 +185,10 @@ def fp8_gemm_experimental(
             workspace.shape[0],
             accumulate,
             use_split_accumulator)
-    elif fp8_mantissa_switch:
+    elif fp8_mantissa_switch > 0:
         global mantissa_switch_printed
         if not mantissa_switch_printed:
-            print(F"MANTISSA SWITCH ENABLED FOR DGRAD")
+            print(f"MANTISSA SWITCH ENABLED FOR DGRAD with value: {fp8_mantissa_switch}")
             mantissa_switch_printed = True
         if not layernorm_linear_printed and layer_name == "layernorm_linear":
             print("MANTISSA SWITCH SELECTED FOR LAYERNORM LINEAR")
@@ -197,7 +197,7 @@ def fp8_gemm_experimental(
             print("MANTISSA SWITCH SELECTED FOR LINEAR")
             linear_printed = True
         hist_amax = torch.max(fp8_meta_info['scaling_bwd'].amax_history[1:], dim=0).values[0]
-        gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast_mantissa_switch(gradients_bf16, fp8_current_scaling_recipe, True, hist_amax) # Only B is grad tenso
+        gradients_fp8, gradients_dtype, gradients_scale_inv = fp8_cast_mantissa_switch(gradients_bf16, fp8_current_scaling_recipe, True, hist_amax, fp8_mantissa_switch) # Only B is grad tenso
         gradients_fp8_tensor = 0
         args = (
             A,
@@ -516,6 +516,7 @@ def sf_mantissa_switch_compute(
     scale: torch.Tensor,
     fp8_max: float,
     margin: int,
+    mantissa_switch_type: int,
 ) -> torch.Tensor:
     """Default function to convert amax to scaling factor."""
     # sf = (fp8_max / amax) / (2 ** margin)
@@ -527,9 +528,16 @@ def sf_mantissa_switch_compute(
     sf = torch.where(exp < 0, 1 / sf, sf)
     #cnt = sf.numel()
     #for i in range(cnt):
-    extra_sf = random.choice([1.     , 0.96875, 0.9375 , 0.90625, 0.875  , 0.84375, 0.8125 ,
-        0.78125, 0.75   , 0.71875, 0.6875 , 0.65625, 0.625  , 0.59375,
-        0.5625 , 0.53125])
+    extra_sf = None
+    if mantissa_switch_type == 1:
+        extra_sf = random.choice([1.     , 0.96875, 0.9375 , 0.90625, 0.875  , 0.84375, 0.8125 ,
+            0.78125, 0.75   , 0.71875, 0.6875 , 0.65625, 0.625  , 0.59375,
+            0.5625 , 0.53125])
+        #print(extra_sf)
+    elif mantissa_switch_type == 2:
+        extra_sf = torch.rand(1).cuda().float()[0]
+        extra_sf = (extra_sf + 1.0) / 2.0
+        #print(extra_sf, sf)
     sf = sf * extra_sf
     #sf[i] = sf[i] * extra_sf
     sf = torch.where(amax > 0.0, sf, scale)
@@ -537,7 +545,7 @@ def sf_mantissa_switch_compute(
     return sf
 
 
-def fp8_cast_mantissa_switch(tensor, recipe, grad_tensor, hist_amax, margin=0):
+def fp8_cast_mantissa_switch(tensor, recipe, grad_tensor, hist_amax, mantissa_switch_type, margin=0):
     assert tensor.dtype in (torch.float, torch.float16, torch.bfloat16), "Unsupported tensor type."
     assert tensor.is_cuda, "Must be a GPU tensor."
 
@@ -550,7 +558,7 @@ def fp8_cast_mantissa_switch(tensor, recipe, grad_tensor, hist_amax, margin=0):
 
     one = torch.ones(1, device="cuda")
 
-    scale = sf_mantissa_switch_compute(hist_amax, one, fp8_max, margin)
+    scale = sf_mantissa_switch_compute(hist_amax, one, fp8_max, margin, mantissa_switch_type)
     scale_inv = 1.0 / scale
 
     fp8_tensor = tex.cast_to_fp8(tensor, scale, hist_amax, scale_inv, fp8_dtype)
