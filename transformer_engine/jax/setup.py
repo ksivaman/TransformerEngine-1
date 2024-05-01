@@ -2,22 +2,10 @@
 #
 # See LICENSE for license information.
 
-"""Installation script."""
-
-import ctypes
-import os
-import re
-import shutil
-import subprocess
-import sys
-import sysconfig
-from functools import lru_cache
+"""Installation script for TE jax extensions."""
 from pathlib import Path
-from subprocess import CalledProcessError
-from typing import List, Optional, Tuple, Union
 
 import setuptools
-from setuptools.command.build_ext import build_ext
 from setuptools.command.build_ext import build_ext as BuildExtension
 
 try:
@@ -26,12 +14,7 @@ except ImportError as e:
     raise RuntimeError("The package `transformer_engine` must be installed in order to build this package.") from e
 
 from transformer_engine.build_tools.build_ext import get_build_ext
-from transformer_engine.build_tools.utils import (
-    found_cmake,
-    found_ninja,
-    found_pybind11,
-    remove_dups,
-)
+from transformer_engine.build_tools.utils import found_pybind11
 from transformer_engine.te_version import te_version
 
 CMakeBuildExtension = get_build_ext(BuildExtension, dlfw="jax")
@@ -40,6 +23,10 @@ try:
     import jax  # noqa: F401
 except ImportError as e:
     raise RuntimeError("This package needs JAX to build.") from e
+
+# Project directory root
+root_path: Path = Path(__file__).resolve().parent.parent.parent
+
 
 if __name__ == "__main__":
     setup_reqs = list()
@@ -57,5 +44,5 @@ if __name__ == "__main__":
         install_requires=["jax", "flax>=0.7.1"],
         test_requires=["numpy", "praxis"],
         setup_requires=setup_reqs,
-        license_files=("LICENSE",),
+        license_files=(root_path / "LICENSE",),
     )

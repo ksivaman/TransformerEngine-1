@@ -2,8 +2,7 @@
 #
 # See LICENSE for license information.
 
-"""Installation script."""
-
+"""Installation script for TE pytorch extensions."""
 import os
 from pathlib import Path
 
@@ -106,7 +105,6 @@ def setup_pytorch_extension() -> setuptools.Extension:
         name="transformer_engine_extensions",
         sources=sources,
         include_dirs=include_dirs,
-        # libraries=["transformer_engine"], ### TODO (tmoon) Debug linker errors
         extra_compile_args={
             "cxx": cxx_flags,
             "nvcc": nvcc_flags,
@@ -128,5 +126,5 @@ if __name__ == "__main__":
         cmdclass={"build_ext": CMakeBuildExtension},
         install_requires=["torch", "flash-attn>=2.0.6,<=2.4.2,!=2.0.9,!=2.1.0"],
         test_requires=["numpy", "onnxruntime", "torchvision"],
-        license_files=("LICENSE",),
+        license_files=(root_path / "LICENSE",),
     )

@@ -2,7 +2,7 @@
 #
 # See LICENSE for license information.
 
-"""Installation script for TE paddle extension."""
+"""Installation script for TE paddle-paddle extensions."""
 from pathlib import Path
 
 import setuptools
@@ -23,6 +23,10 @@ try:
     import paddle  # noqa: F401
 except ImportError as e:
     raise RuntimeError("This package needs Paddle Paddle to build.") from e
+
+
+# Project directory root
+root_path: Path = Path(__file__).resolve().parent.parent.parent
 
 
 def setup_paddle_extension() -> setuptools.Extension:
@@ -106,5 +110,5 @@ if __name__ == "__main__":
         cmdclass={"build_ext": CMakeBuildExtension},
         install_requires=["paddlepaddle-gpu"],
         test_requires=["numpy"],
-        license_files=("LICENSE",),
+        license_files=(root_path / "LICENSE",),
     )
