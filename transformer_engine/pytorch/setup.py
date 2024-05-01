@@ -4,20 +4,10 @@
 
 """Installation script."""
 
-import ctypes
 import os
-import re
-import shutil
-import subprocess
-import sys
-import sysconfig
-from functools import lru_cache
 from pathlib import Path
-from subprocess import CalledProcessError
-from typing import List, Optional, Tuple, Union
 
 import setuptools
-from setuptools.command.build_ext import build_ext
 from torch.utils.cpp_extension import BuildExtension
 
 try:
@@ -29,14 +19,14 @@ from transformer_engine.build_tools.build_ext import get_build_ext
 from transformer_engine.build_tools.utils import (
     all_files_in_dir,
     cuda_version,
-    found_cmake,
-    found_ninja,
-    remove_dups,
     userbuffers_enabled,
 )
 from transformer_engine.te_version import te_version
 
 CMakeBuildExtension = get_build_ext(BuildExtension, dlfw="torch")
+
+# Project directory root
+root_path: Path = Path(__file__).resolve().parent.parent.parent
 
 try:
     import torch  # noqa: F401
@@ -48,7 +38,7 @@ def setup_pytorch_extension() -> setuptools.Extension:
     """Setup CUDA extension for PyTorch support"""
 
     # Source files
-    src_dir = Path("transformer_engine/pytorch/csrc")
+    src_dir = root_path / "transformer_engine" / "pytorch" / "csrc"
     extensions_dir = src_dir / "extensions"
     sources = [
         src_dir / "common.cu",
@@ -58,15 +48,15 @@ def setup_pytorch_extension() -> setuptools.Extension:
         # linking with libtransformer_engine.so, as the pre-built PyTorch
         # wheel from conda or PyPI was not built with CXX11_ABI, and will
         # cause undefined symbol issues.
-        Path("transformer_engine/common/util/system.cpp"),
+        root_path / "transformer_engine" / "common" / "util" / "system.cpp",
     ] + all_files_in_dir(extensions_dir)
 
     # Header files
     include_dirs = [
-        Path("transformer_engine/common/include"),
-        Path("transformer_engine/pytorch/csrc"),
-        Path("transformer_engine"),
-        Path("3rdparty/cudnn-frontend/include"),
+        root_path / "transformer_engine" / "common" / "include",
+        root_path / "transformer_engine" / "pytorch" / "csrc",
+        root_path / "transformer_engine",
+        root_path / "3rdparty" / "cudnn-frontend" / "include",
     ]
 
     # Compiler flags
@@ -127,9 +117,6 @@ def setup_pytorch_extension() -> setuptools.Extension:
 if __name__ == "__main__":
     # Extensions
     ext_modules = [setup_pytorch_extension()]
-
-    # if "paddle" in frameworks():
-    #     ext_modules.append(setup_paddle_extension())
 
     # Configure package
     setuptools.setup(

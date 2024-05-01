@@ -42,9 +42,6 @@ except ImportError as e:
     raise RuntimeError("This package needs JAX to build.") from e
 
 if __name__ == "__main__":
-    # Extensions
-    ext_modules = [setup_paddle_extension()]
-
     setup_reqs = list()
     if not found_pybind11():
         setup_reqs.append("pybind11")
@@ -55,7 +52,7 @@ if __name__ == "__main__":
         version=te_version(),
         packages=[],
         description="Transformer acceleration library - Jax Lib",
-        ext_modules=ext_modules,
+        ext_modules=[],
         cmdclass={"build_ext": CMakeBuildExtension},
         install_requires=["jax", "flax>=0.7.1"],
         test_requires=["numpy", "praxis"],

@@ -29,7 +29,6 @@ def setup_common_extension() -> CMakeExtension:
 
     """
     cmake_flags = []
-    cmake_flags.append("-DENABLE_JAX=ON")
     if userbuffers_enabled():
         cmake_flags.append("-DNVTE_WITH_USERBUFFERS=ON")
 
@@ -46,7 +45,6 @@ def setup_requirements() -> Tuple[List[str], List[str], List[str]]:
     """Setup Python dependencies
 
     Returns dependencies for build, runtime, and testing.
-
     """
 
     # Common requirements

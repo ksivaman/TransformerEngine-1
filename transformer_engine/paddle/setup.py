@@ -2,23 +2,11 @@
 #
 # See LICENSE for license information.
 
-"""Installation script."""
-
-import ctypes
-import os
-import re
-import shutil
-import subprocess
-import sys
-import sysconfig
-from functools import lru_cache
+"""Installation script for TE paddle extension."""
 from pathlib import Path
-from subprocess import CalledProcessError
-from typing import List, Optional, Tuple, Union
 
 import setuptools
 from paddle.utils.cpp_extension import BuildExtension
-from setuptools.command.build_ext import build_ext
 
 try:
     import transformer_engine  # noqa: F401
@@ -26,7 +14,7 @@ except ImportError as e:
     raise RuntimeError("The package `transformer_engine` must be installed in order to build this package.") from e
 
 from transformer_engine.build_tools.build_ext import get_build_ext
-from transformer_engine.build_tools.utils import found_cmake, found_ninja, remove_dups
+from transformer_engine.build_tools.utils import cuda_version
 from transformer_engine.te_version import te_version
 
 CMakeBuildExtension = get_build_ext(BuildExtension, dlfw="paddle")
