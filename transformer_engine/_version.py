@@ -18,8 +18,9 @@ def _version_str() -> str:
     version_str = None
     try:
         version_str = metadata.version("transformer_engine")
-    except:
+    except ImportError:
         pass
+
     if version_str:
         return version_str
 
@@ -27,8 +28,9 @@ def _version_str() -> str:
     try:
         from te_version import te_version
         version_str = te_version()
-    except:
+    except ImportError:
         pass
+    
     if version_str:
         return version_str
 

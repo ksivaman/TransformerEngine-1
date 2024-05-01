@@ -3,15 +3,15 @@
 # See LICENSE for license information.
 
 """Top level package"""
-from ._version import __version__
-from . import common
+from transformer_engine._version import __version__
+# from transformer_engine import common
 
-try:
-    from . import pytorch
-except ImportError as e:
-    pass
+# try:
+#     import transformer_engine.pytorch
+# except ImportError as e:
+#     pass
 
-try:
-    from . import jax
-except ImportError as e:
-    pass
+# try:
+#     import transformer_engine.jax
+# except ImportError as e:
+#     pass
