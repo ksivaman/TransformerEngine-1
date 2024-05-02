@@ -1,0 +1,80 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
+// https://github.com/microsoft/vscode-dev-containers/tree/v0.245.2/containers/docker-existing-dockerfile
+{
+    "name": "Competitive Benchmark Development Container",
+    "image": "gitlab-master.nvidia.com:5005/ksivamani/containers:pytorch_22.01-py3_transformer_engine_v0_0_1",
+    // "build": {
+    //     "context": "..",
+    //     "dockerfile": "Dockerfile",
+    //     "target": "nvidia_container",
+    //     "args": {
+    //         "BASE_IMAGE": ""
+    //     }
+    // },
+    "workspaceFolder": "/workspace/transformer_engine",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/transformer_engine,type=bind",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.profiles.linux": {
+                    "zsh": {
+                        "path": "/bin/bash"
+                    }
+                },
+                "editor.formatOnSave": true,
+                "[python]": {
+                    "analysis.autoImportCompletions": true,
+                    "analysis.typeCheckingMode": "basic",
+                    "defaultInterpreterPath": "/usr/bin/python",
+                    "editor.codeActionsOnSave": {
+                        "source.organizeImports": "always"
+                    },
+                    "editor.defaultFormatter": "charliermarsh.ruff",
+                    "languageServer": "Pylance",
+                    "linting.enabled": true
+                }
+            },
+            // https://code.visualstudio.com/docs/remote/devcontainerjson-reference#_vs-code-specific-properties
+            // Add the IDs of extensions you want installed when the container is created.
+            "extensions": [
+                // Build Tools
+                "ms-azuretools.vscode-docker",
+                // Git & Github
+                "GitHub.vscode-pull-request-github",
+                // Makefile Tools
+                "ms-vscode.makefile-tools",
+                // Linters
+                "davidanson.vscode-markdownlint",
+                "mrmlnc.vscode-duplicate",
+                "visualstudioexptteam.vscodeintellicode",
+                "charliermarsh.ruff",
+                // python
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                // TOML
+                "tamasfe.even-better-toml",
+                // YAML
+                "redhat.vscode-yaml",
+                // CSV
+                "mechatroner.rainbow-csv"
+            ]
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/common-utils:2": {
+            "username": "jaxpp",
+            "installZsh": true,
+            "installOhMyZsh": true,
+            "configureZshAsDefaultShell": false,
+            "upgradePackages": false
+        },
+        "ghcr.io/devcontainers/features/git:1": {
+            "version": "latest"
+        }
+    },
+    "runArgs": [
+        "--privileged",
+        "--gpus=all"
+    ]
+}
