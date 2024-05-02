@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import sysconfig
+
 from pathlib import Path
 from subprocess import CalledProcessError
 from typing import List, Optional
@@ -98,9 +99,10 @@ def get_build_ext(extension_cls: setuptools.Extension, dlfw: Optional[str] = Non
                     # Set up incremental builds for CMake extensions
                     setup_dir = Path(__file__).resolve().parent
                     build_dir = setup_dir / "build" / "cmake"
-                    build_dir.mkdir(
-                        parents=True, exist_ok=True
-                    )  # Ensure the directory exists
+
+                    # Ensure the directory exists
+                    build_dir.mkdir(parents=True, exist_ok=True)
+
                     package_path = Path(self.get_ext_fullpath(ext.name))
                     install_dir = package_path.resolve().parent
                     ext._build_cmake(
@@ -152,5 +154,14 @@ def get_build_ext(extension_cls: setuptools.Extension, dlfw: Optional[str] = Non
                 from paddle.utils.cpp_extension.extension_utils import custom_write_stub
 
                 custom_write_stub(lib_name, stub_path)
+
+            # Create "torch/lib" directory if not exists.
+            # (It is not created yet in "develop" mode.)
+            target_dir = Path(self.build_lib) / "transformer_engine"
+            target_dir.mkdir(exist_ok=True, parents=True)
+
+            for ext in Path(self.build_lib).glob("*.so"):
+                self.copy_file(ext, target_dir)
+                os.remove(ext)
 
     return _CMakeBuildExtension

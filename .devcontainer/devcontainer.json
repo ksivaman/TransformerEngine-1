@@ -2,7 +2,7 @@
 // https://github.com/microsoft/vscode-dev-containers/tree/v0.245.2/containers/docker-existing-dockerfile
 {
     "name": "Competitive Benchmark Development Container",
-    "image": "gitlab-master.nvidia.com:5005/ksivamani/containers:pytorch_22.01-py3_transformer_engine_v0_0_1",
+    "image": "nvcr.io/nvidia/pytorch:24.03-py3",
     // "build": {
     //     "context": "..",
     //     "dockerfile": "Dockerfile",

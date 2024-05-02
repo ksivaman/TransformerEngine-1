@@ -3,16 +3,22 @@
 # See LICENSE for license information.
 
 """Installation script for TE pytorch extensions."""
+
 import os
+
+os.environ["TE_PROJECT_BUILDING"] = "1"
+
 from pathlib import Path
 
 import setuptools
 from torch.utils.cpp_extension import BuildExtension
 
 try:
-    import transformer_engine  # noqa: F401
+    import transformer_engine
 except ImportError as e:
-    raise RuntimeError("The package `transformer_engine` must be installed in order to build this package.") from e
+    raise RuntimeError(
+        "The package `transformer_engine` must be installed in order to build this package."
+    ) from e
 
 from transformer_engine.build_tools.build_ext import get_build_ext
 from transformer_engine.build_tools.utils import (
@@ -105,6 +111,7 @@ def setup_pytorch_extension() -> setuptools.Extension:
         name="transformer_engine_extensions",
         sources=sources,
         include_dirs=include_dirs,
+        library_dirs=[str(Path(transformer_engine.__path__[0]).parent)],
         extra_compile_args={
             "cxx": cxx_flags,
             "nvcc": nvcc_flags,
@@ -125,6 +132,6 @@ if __name__ == "__main__":
         ext_modules=ext_modules,
         cmdclass={"build_ext": CMakeBuildExtension},
         install_requires=["torch", "flash-attn>=2.0.6,<=2.4.2,!=2.0.9,!=2.1.0"],
-        test_requires=["numpy", "onnxruntime", "torchvision"],
-        license_files=(root_path / "LICENSE",),
+        tests_require=["numpy", "onnxruntime", "torchvision"],
+        # license_files=(root_path / "LICENSE",),
     )

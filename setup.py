@@ -4,6 +4,10 @@
 
 """Installation script."""
 
+import os
+
+os.environ["TE_PROJECT_BUILDING"] = "1"
+
 from pathlib import Path
 from typing import List, Tuple
 
@@ -89,4 +93,8 @@ if __name__ == "__main__":
         setup_requires=setup_requires,
         install_requires=install_requires,
         license_files=("LICENSE",),
+        package_data={
+            "": ["transformer_engine/VERSION"],
+        },
+        include_package_data=True,
     )

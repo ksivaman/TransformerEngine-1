@@ -3,15 +3,6 @@
 # See LICENSE for license information.
 
 """Top level package"""
-from transformer_engine._version import __version__
-# from transformer_engine import common
 
-# try:
-#     import transformer_engine.pytorch
-# except ImportError as e:
-#     pass
-
-# try:
-#     import transformer_engine.jax
-# except ImportError as e:
-#     pass
+from transformer_engine._version import __version__  # noqa: F401
+import transformer_engine.common  # noqa: F401

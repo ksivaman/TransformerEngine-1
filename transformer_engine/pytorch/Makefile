@@ -59,7 +59,8 @@ coverage: ## check code coverage quickly with the default Python
 # BUILD COMMANDS
 # ============================================================================ #
 
-build: clean ## builds wheel package
+build: clean ## builds source and wheel package
+	python setup.py sdist
 	MAKEFLAGS="-j${NPROCS}" python setup.py bdist_wheel
 	ls -l dist
 
