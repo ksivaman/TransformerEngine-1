@@ -60,7 +60,7 @@ coverage: ## check code coverage quickly with the default Python
 # ============================================================================ #
 
 build: clean ## builds wheel package
-	MAKEFLAGS="-j${NPROCS}" python setup.py bdist_wheel
+	NVTE_IS_PACKAGING=1 MAKEFLAGS="-j${NPROCS}" python setup.py bdist_wheel
 	ls -l dist
 
 build_jax: install ## install the package to the active Python's site-packages

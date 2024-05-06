@@ -5,11 +5,13 @@
 """Installation script."""
 
 import os
+import sys
 
 os.environ["TE_PROJECT_BUILDING"] = "1"
 
 from pathlib import Path
 from typing import List, Tuple
+from functools import cache
 
 import setuptools
 from setuptools.command.build_ext import build_ext as BuildExtension
@@ -74,6 +76,73 @@ if __name__ == "__main__":
 
     __version__ = te_version()
 
+    ext_modules = [setup_common_extension()]
+    cmdclass = ({"build_ext": CMakeBuildExtension},)
+
+    if os.environ.get("NVTE_IS_PACKAGING", default="0") == "0":
+
+        @cache
+        def frameworks() -> List[str]:
+            """DL frameworks to build support for"""
+            _frameworks: List[str] = []
+            supported_frameworks = ["pytorch", "jax", "paddle"]
+
+            # Check environment variable
+            if os.getenv("NVTE_FRAMEWORK"):
+                _frameworks.extend(os.getenv("NVTE_FRAMEWORK").split(","))
+
+            # Check command-line arguments
+            for arg in sys.argv.copy():
+                if arg.startswith("--framework="):
+                    _frameworks.extend(arg.replace("--framework=", "").split(","))
+                    sys.argv.remove(arg)
+
+            # Detect installed frameworks if not explicitly specified
+            if not _frameworks:
+                try:
+                    import torch
+                except ImportError:
+                    pass
+                else:
+                    _frameworks.append("pytorch")
+                try:
+                    import jax
+                except ImportError:
+                    pass
+                else:
+                    _frameworks.append("jax")
+                try:
+                    import paddle
+                except ImportError:
+                    pass
+                else:
+                    _frameworks.append("paddle")
+
+            # Special framework names
+            if "all" in _frameworks:
+                _frameworks = supported_frameworks.copy()
+            if "none" in _frameworks:
+                _frameworks = []
+
+            # Check that frameworks are valid
+            _frameworks = [framework.lower() for framework in _frameworks]
+            for framework in _frameworks:
+                if framework not in supported_frameworks:
+                    raise ValueError(
+                        f"Transformer Engine does not support framework={framework}"
+                    )
+
+            return _frameworks
+
+        if "torch" in frameworks():
+            from transformer_engine.pytorch.setup import setup_pytorch_extension
+
+            ext_modules.append(setup_pytorch_extension())
+
+            # TODO:
+            # See what's up with this. Especially in the "all" case
+            # cmdclass = ({"build_ext": CMakeBuildExtension},)
+
     # Configure package
     setuptools.setup(
         name="transformer_engine",
@@ -89,7 +158,7 @@ if __name__ == "__main__":
         },
         description="Transformer acceleration library",
         ext_modules=[setup_common_extension()],
-        cmdclass={"build_ext": CMakeBuildExtension},
+        cmdclass=cmdclass,
         setup_requires=setup_requires,
         install_requires=install_requires,
         license_files=("LICENSE",),

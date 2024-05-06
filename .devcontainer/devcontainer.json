@@ -1,7 +1,7 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
 // https://github.com/microsoft/vscode-dev-containers/tree/v0.245.2/containers/docker-existing-dockerfile
 {
-    "name": "Competitive Benchmark Development Container",
+    "name": "Transformer Engine Development Container",
     "image": "nvcr.io/nvidia/pytorch:24.03-py3",
     // "build": {
     //     "context": "..",
