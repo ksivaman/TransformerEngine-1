@@ -372,7 +372,10 @@ class CMakeBuildExtension(BuildExtension):
                 print(f"Building CMake extension {ext.name}")
                 # Set up incremental builds for CMake extensions
                 setup_dir = Path(__file__).resolve().parent
-                build_dir = setup_dir / "build" / "cmake"
+                if "jax" in ext.name:
+                    build_dir = setup_dir / "transformer_engine" / "jax" / "build" / "cmake"
+                else:
+                    build_dir = setup_dir / "build" / "cmake"
                 build_dir.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
                 package_path = Path(self.get_ext_fullpath(ext.name))
                 install_dir = package_path.resolve().parent
