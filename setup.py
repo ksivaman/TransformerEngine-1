@@ -17,12 +17,13 @@ import sysconfig
 from typing import List, Optional, Tuple, Union
 
 import setuptools
-from setuptools.command.build_ext import build_ext
 
 from te_version import te_version
 
+
 # Project directory root
 root_path: Path = Path(__file__).resolve().parent
+
 
 @lru_cache(maxsize=1)
 def with_debug_build() -> bool:
@@ -35,9 +36,11 @@ def with_debug_build() -> bool:
         return True
     return False
 
+
 # Call once in global scope since this function manipulates the
 # command-line arguments. Future calls will use a cached value.
 with_debug_build()
+
 
 def found_cmake() -> bool:
     """"Check if valid CMake is available
@@ -63,6 +66,7 @@ def found_cmake() -> bool:
     version = match.group(1).split('.')
     version = tuple(int(v) for v in version)
     return version >= (3, 18)
+
 
 def cmake_bin() -> Path:
     """Get CMake executable
@@ -94,9 +98,11 @@ def cmake_bin() -> Path:
         raise FileNotFoundError("Could not find CMake executable")
     return _cmake_bin
 
+
 def found_ninja() -> bool:
     """"Check if Ninja is available"""
     return shutil.which("ninja") is not None
+
 
 def found_pybind11() -> bool:
     """"Check if pybind11 is available"""
@@ -131,6 +137,7 @@ def found_pybind11() -> bool:
     else:
         return True
     return False
+
 
 def cuda_version() -> Tuple[int, ...]:
     """CUDA Toolkit version as a (major, minor) tuple
@@ -168,6 +175,7 @@ def cuda_version() -> Tuple[int, ...]:
     version = match.group(1).split('.')
     return tuple(int(v) for v in version)
 
+
 @lru_cache(maxsize=1)
 def with_userbuffers() -> bool:
     """Check if userbuffers support is enabled"""
@@ -176,6 +184,7 @@ def with_userbuffers() -> bool:
             "MPI_HOME must be set if NVTE_WITH_USERBUFFERS=1"
         return True
     return False
+
 
 @lru_cache(maxsize=1)
 def frameworks() -> List[str]:
@@ -230,9 +239,11 @@ def frameworks() -> List[str]:
 
     return _frameworks
 
+
 # Call once in global scope since this function manipulates the
 # command-line arguments. Future calls will use a cached value.
 frameworks()
+
 
 def setup_requirements() -> Tuple[List[str], List[str], List[str]]:
     """Setup Python dependencies
@@ -423,8 +434,6 @@ def setup_common_extension() -> CMakeExtension:
 
     """
     cmake_flags = []
-    if "jax" in frameworks():
-        cmake_flags.append("-DENABLE_JAX=ON")
     if with_userbuffers():
         cmake_flags.append("-DNVTE_WITH_USERBUFFERS=ON")
     return CMakeExtension(
@@ -433,8 +442,10 @@ def setup_common_extension() -> CMakeExtension:
         cmake_flags=cmake_flags,
     )
 
+
 def _all_files_in_dir(path):
     return list(path.iterdir())
+
 
 def setup_pytorch_extension() -> setuptools.Extension:
     """Setup CUDA extension for PyTorch support"""
@@ -580,8 +591,18 @@ def setup_paddle_extension() -> setuptools.Extension:
     ext.name = "transformer_engine_paddle_pd_"
     return ext
 
-def main():
 
+def setup_jax_extension() -> CMakeExtension:
+    """Setup CUDA extension for Jax support"""
+    cmake_flags = []
+    return CMakeExtension(
+        name="transformer_engine_jax",
+        cmake_path=root_path / "transformer_engine/jax",
+        cmake_flags=cmake_flags,
+    )
+
+
+def main():
     # Submodules to install
     packages = setuptools.find_packages(
         include=["transformer_engine", "transformer_engine.*"],
@@ -594,9 +615,10 @@ def main():
     ext_modules = [setup_common_extension()]
     if "pytorch" in frameworks():
         ext_modules.append(setup_pytorch_extension())
-
     if "paddle" in frameworks():
         ext_modules.append(setup_paddle_extension())
+    if "jax" in frameworks():
+        ext_modules.append(setup_jax_extension())
 
     # Configure package
     setuptools.setup(
