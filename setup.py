@@ -607,6 +607,13 @@ def setup_jax_extension() -> CMakeExtension:
 
 def main():
     # Submodules to install
+    release_build_common = bool(int(os.getenv("NVTE_RELEASE_BUILD_COMMON", "0")))
+    release_build_framework = bool(int(os.getenv("NVTE_RELEASE_BUILD_FRAMEWORK", "0")))
+    assert (
+        not (release_build_common and release_build_framework)
+    ), "TE internal error: do not combine framework extensions and common `.so` release builds."
+    release_build = release_build_common or release_build_framework
+
     packages = setuptools.find_packages(
         include=["transformer_engine", "transformer_engine.*"],
     )
@@ -615,13 +622,20 @@ def main():
     setup_requires, install_requires, test_requires = setup_requirements()
 
     # Extensions
-    ext_modules = [setup_common_extension()]
-    if "pytorch" in frameworks():
-        ext_modules.append(setup_pytorch_extension())
-    if "paddle" in frameworks():
-        ext_modules.append(setup_paddle_extension())
-    if "jax" in frameworks():
-        ext_modules.append(setup_jax_extension())
+    package_name = "transformer_engine"
+    ext_modules = []
+
+    if not release_build or release_build_common:
+        ext_modules = [setup_common_extension()]
+    if not release_build or release_build_framework:
+        if "pytorch" in frameworks():
+            ext_modules.append(setup_pytorch_extension())
+        if "paddle" in frameworks():
+            ext_modules.append(setup_paddle_extension())
+        if "jax" in frameworks():
+            ext_modules.append(setup_jax_extension())
+        if release_build:
+            package_name += "_fw"
 
     # Configure package
     setuptools.setup(
