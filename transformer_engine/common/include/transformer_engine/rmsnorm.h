@@ -43,7 +43,7 @@ extern "C" {
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_rmsnorm_fwd(const NVTETensor x, const NVTETensor gamma, const float epsilon, NVTETensor z,
+__attribute__((visibility("default"))) void nvte_rmsnorm_fwd(const NVTETensor x, const NVTETensor gamma, const float epsilon, NVTETensor z,
                       NVTETensor rsigma, cudaStream_t stream, const int multiprocessorCount,
                       NVTETensor workspace, NVTETensor barrier);
 
@@ -73,7 +73,7 @@ void nvte_rmsnorm_fwd(const NVTETensor x, const NVTETensor gamma, const float ep
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_rmsnorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const float epsilon,
+__attribute__((visibility("default"))) void nvte_rmsnorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const float epsilon,
                         NVTETensor z, NVTETensor rsigma, cudaStream_t stream,
                         const int multiprocessorCount, NVTETensor workspace, NVTETensor barrier);
 
@@ -106,7 +106,7 @@ void nvte_rmsnorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const float 
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_rmsnorm_bwd(const NVTETensor dz, const NVTETensor x, const NVTETensor rsigma,
+__attribute__((visibility("default"))) void nvte_rmsnorm_bwd(const NVTETensor dz, const NVTETensor x, const NVTETensor rsigma,
                       const NVTETensor gamma, NVTETensor dx, NVTETensor dgamma,
                       NVTETensor dgamma_part, cudaStream_t stream, const int multiprocessorCount,
                       NVTETensor workspace, NVTETensor barrier);
@@ -140,7 +140,7 @@ void nvte_rmsnorm_bwd(const NVTETensor dz, const NVTETensor x, const NVTETensor 
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_rmsnorm1p_bwd(const NVTETensor dz, const NVTETensor x, const NVTETensor rsigma,
+__attribute__((visibility("default"))) void nvte_rmsnorm1p_bwd(const NVTETensor dz, const NVTETensor x, const NVTETensor rsigma,
                         const NVTETensor gamma, NVTETensor dx, NVTETensor dgamma,
                         NVTETensor dgamma_part, cudaStream_t stream, const int multiprocessorCount,
                         NVTETensor workspace, NVTETensor barrier);

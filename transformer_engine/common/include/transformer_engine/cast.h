@@ -23,7 +23,7 @@ extern "C" {
  *  \param[in,out] output    Output FP8 tensor.
  *  \param[in]     stream    CUDA stream used for the operation.
  */
-void nvte_fp8_quantize(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_fp8_quantize(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
 /*! \brief Cast tensor from FP8.
  *
@@ -31,7 +31,7 @@ void nvte_fp8_quantize(const NVTETensor input, NVTETensor output, cudaStream_t s
  *  \param[out]    output    Output tensor.
  *  \param[in]     stream    CUDA stream used for the operation.
  */
-void nvte_fp8_dequantize(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_fp8_dequantize(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"

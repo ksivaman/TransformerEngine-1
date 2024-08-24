@@ -23,7 +23,7 @@ extern "C" {
  *  \param[in]     scale_factor    Scalar for the input tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_softmax_forward(const NVTETensor input, NVTETensor softmax_results,
+__attribute__((visibility("default"))) void nvte_scaled_softmax_forward(const NVTETensor input, NVTETensor softmax_results,
                                  float scale_factor, cudaStream_t stream);
 
 /*! \brief Compute the backward of the scaled softmax activation.
@@ -38,7 +38,7 @@ void nvte_scaled_softmax_forward(const NVTETensor input, NVTETensor softmax_resu
  *  \param[in]     scale_factor    Scalar for the output tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_softmax_backward(const NVTETensor incoming_grads, const NVTETensor softmax_results,
+__attribute__((visibility("default"))) void nvte_scaled_softmax_backward(const NVTETensor incoming_grads, const NVTETensor softmax_results,
                                   NVTETensor output_grads, float scale_factor, cudaStream_t stream);
 
 /*! \brief Compute scaled masked softmax activation on the input.
@@ -49,7 +49,7 @@ void nvte_scaled_softmax_backward(const NVTETensor incoming_grads, const NVTETen
  *  \param[in]     scale_factor    Scalar for the input tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_masked_softmax_forward(const NVTETensor input, const NVTETensor mask,
+__attribute__((visibility("default"))) void nvte_scaled_masked_softmax_forward(const NVTETensor input, const NVTETensor mask,
                                         NVTETensor softmax_results, float scale_factor,
                                         cudaStream_t stream);
 
@@ -65,7 +65,7 @@ void nvte_scaled_masked_softmax_forward(const NVTETensor input, const NVTETensor
  *  \param[in]     scale_factor    Scalar for the output tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_masked_softmax_backward(const NVTETensor incoming_grads,
+__attribute__((visibility("default"))) void nvte_scaled_masked_softmax_backward(const NVTETensor incoming_grads,
                                          const NVTETensor softmax_results, NVTETensor output_grads,
                                          float scale_factor, cudaStream_t stream);
 
@@ -76,7 +76,7 @@ void nvte_scaled_masked_softmax_backward(const NVTETensor incoming_grads,
  *  \param[in]     scale_factor    Scalar for the input tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_upper_triang_masked_softmax_forward(const NVTETensor input,
+__attribute__((visibility("default"))) void nvte_scaled_upper_triang_masked_softmax_forward(const NVTETensor input,
                                                      NVTETensor softmax_results, float scale_factor,
                                                      cudaStream_t stream);
 
@@ -92,7 +92,7 @@ void nvte_scaled_upper_triang_masked_softmax_forward(const NVTETensor input,
  *  \param[in]     scale_factor    Scalar for the output tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_upper_triang_masked_softmax_backward(const NVTETensor incoming_grads,
+__attribute__((visibility("default"))) void nvte_scaled_upper_triang_masked_softmax_backward(const NVTETensor incoming_grads,
                                                       const NVTETensor softmax_results,
                                                       NVTETensor output_grads, float scale_factor,
                                                       cudaStream_t stream);
@@ -104,7 +104,7 @@ void nvte_scaled_upper_triang_masked_softmax_backward(const NVTETensor incoming_
  *  \param[in]     scale_factor    Scalar for the input tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_aligned_causal_masked_softmax_forward(const NVTETensor input,
+__attribute__((visibility("default"))) void nvte_scaled_aligned_causal_masked_softmax_forward(const NVTETensor input,
                                                        NVTETensor softmax_results,
                                                        float scale_factor, cudaStream_t stream);
 
@@ -120,7 +120,7 @@ void nvte_scaled_aligned_causal_masked_softmax_forward(const NVTETensor input,
  *  \param[in]     scale_factor    Scalar for the output tensor.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_scaled_aligned_causal_masked_softmax_backward(const NVTETensor incoming_grads,
+__attribute__((visibility("default"))) void nvte_scaled_aligned_causal_masked_softmax_backward(const NVTETensor incoming_grads,
                                                         const NVTETensor softmax_results,
                                                         NVTETensor output_grads, float scale_factor,
                                                         cudaStream_t stream);

@@ -39,15 +39,15 @@ enum class NVTE_Activation_Type {
   SREGLU,
 };
 
-void nvte_gelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_gelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_silu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_silu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_relu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_relu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_qgelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_qgelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_srelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_srelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
 /*! \brief Compute activation gradient.
  *
@@ -56,19 +56,19 @@ void nvte_srelu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
  *  \param[in,out] output    Output tensor.
  *  \param[in]     stream    CUDA stream used for the operation.
  */
-void nvte_dgelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dgelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                 cudaStream_t stream);
 
-void nvte_dsilu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dsilu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                 cudaStream_t stream);
 
-void nvte_drelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_drelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                 cudaStream_t stream);
 
-void nvte_dqgelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dqgelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                  cudaStream_t stream);
 
-void nvte_dsrelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dsrelu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                  cudaStream_t stream);
 
 /*! \brief Compute gated activation of the input.
@@ -78,15 +78,15 @@ void nvte_dsrelu(const NVTETensor grad, const NVTETensor input, NVTETensor outpu
  *                           It computes Act(input[N, :H]) x input[N, H:]
  *  \param[in]     stream    CUDA stream used for the operation.
  */
-void nvte_geglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_geglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_swiglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_swiglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_reglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_reglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_qgeglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_qgeglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
-void nvte_sreglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_sreglu(const NVTETensor input, NVTETensor output, cudaStream_t stream);
 
 /*! \brief Compute gated activation gradient.
  *  \param[in]     grad      Incoming gradient of shape [N, H].
@@ -94,19 +94,19 @@ void nvte_sreglu(const NVTETensor input, NVTETensor output, cudaStream_t stream)
  *  \param[in,out] output    Outgoing gradient of shape [N, H * 2].
  *  \param[in]     stream    CUDA stream used for the operation.
  */
-void nvte_dgeglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dgeglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                  cudaStream_t stream);
 
-void nvte_dswiglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dswiglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                   cudaStream_t stream);
 
-void nvte_dreglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dreglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                  cudaStream_t stream);
 
-void nvte_dqgeglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dqgeglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                   cudaStream_t stream);
 
-void nvte_dsreglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_dsreglu(const NVTETensor grad, const NVTETensor input, NVTETensor output,
                   cudaStream_t stream);
 
 #ifdef __cplusplus

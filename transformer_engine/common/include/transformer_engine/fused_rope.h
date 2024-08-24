@@ -33,7 +33,7 @@ extern "C" {
  *  \param[in]     o_stride_d      Stride of the d dimension of output.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_fused_rope_forward(const NVTETensor input, const NVTETensor freqs, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_fused_rope_forward(const NVTETensor input, const NVTETensor freqs, NVTETensor output,
                              const int s, const int b, const int h, const int d, const int d2,
                              const int stride_s, const int stride_b, const int stride_h,
                              const int stride_d, const int o_stride_s, const int o_stride_b,
@@ -59,7 +59,7 @@ void nvte_fused_rope_forward(const NVTETensor input, const NVTETensor freqs, NVT
  *  \param[in]     o_stride_d      Stride of the d dimension of input_grads.
  *  \param[in]     stream          CUDA stream used for the operation.
  */
-void nvte_fused_rope_backward(const NVTETensor output_grads, const NVTETensor freqs,
+__attribute__((visibility("default"))) void nvte_fused_rope_backward(const NVTETensor output_grads, const NVTETensor freqs,
                               NVTETensor input_grads, const int s, const int b, const int h,
                               const int d, const int d2, const int stride_s, const int stride_b,
                               const int stride_h, const int stride_d, const int o_stride_s,
@@ -85,7 +85,7 @@ void nvte_fused_rope_backward(const NVTETensor output_grads, const NVTETensor fr
  *  \param[in]     o_stride_d    Stride of the d dimension of output.
  *  \param[in]     stream        CUDA stream used for the operation.
  */
-void nvte_fused_rope_thd_forward(const NVTETensor input, const NVTETensor cu_seqlens,
+__attribute__((visibility("default"))) void nvte_fused_rope_thd_forward(const NVTETensor input, const NVTETensor cu_seqlens,
                                  const NVTETensor freqs, NVTETensor output, const int max_s,
                                  const int b, const int h, const int d, const int d2,
                                  const int stride_t, const int stride_h, const int stride_d,
@@ -111,7 +111,7 @@ void nvte_fused_rope_thd_forward(const NVTETensor input, const NVTETensor cu_seq
  *  \param[in]     o_stride_d    Stride of the d dimension of input_grads.
  *  \param[in]     stream        CUDA stream used for the operation.
  */
-void nvte_fused_rope_thd_backward(const NVTETensor output_grads, const NVTETensor cu_seqlens,
+__attribute__((visibility("default"))) void nvte_fused_rope_thd_backward(const NVTETensor output_grads, const NVTETensor cu_seqlens,
                                   const NVTETensor freqs, NVTETensor input_grads, const int max_s,
                                   const int b, const int h, const int d, const int d2,
                                   const int stride_t, const int stride_h, const int stride_d,

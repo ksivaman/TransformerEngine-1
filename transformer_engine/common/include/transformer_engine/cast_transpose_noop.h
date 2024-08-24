@@ -17,10 +17,10 @@
 extern "C" {
 #endif
 
-void nvte_transpose_with_noop(const NVTETensor input, const NVTETensor noop, NVTETensor output,
+__attribute__((visibility("default"))) void nvte_transpose_with_noop(const NVTETensor input, const NVTETensor noop, NVTETensor output,
                               cudaStream_t stream);
 
-void nvte_cast_transpose_with_noop(const NVTETensor input, const NVTETensor noop,
+__attribute__((visibility("default"))) void nvte_cast_transpose_with_noop(const NVTETensor input, const NVTETensor noop,
                                    NVTETensor cast_output, NVTETensor transposed_output,
                                    cudaStream_t stream);
 

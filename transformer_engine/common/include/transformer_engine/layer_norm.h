@@ -42,7 +42,7 @@ extern "C" {
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_layernorm_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
+__attribute__((visibility("default"))) void nvte_layernorm_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
                         const float epsilon, NVTETensor z, NVTETensor mu, NVTETensor rsigma,
                         cudaStream_t stream, const int multiprocessorCount, NVTETensor workspace,
                         NVTETensor barrier);
@@ -72,7 +72,7 @@ void nvte_layernorm_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETe
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_layernorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
+__attribute__((visibility("default"))) void nvte_layernorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
                           const float epsilon, NVTETensor z, NVTETensor mu, NVTETensor rsigma,
                           cudaStream_t stream, const int multiprocessorCount, NVTETensor workspace,
                           NVTETensor barrier);
@@ -106,7 +106,7 @@ void nvte_layernorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const NVTE
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_layernorm_bwd(const NVTETensor dz,      // BxSxhidden_size
+__attribute__((visibility("default"))) void nvte_layernorm_bwd(const NVTETensor dz,      // BxSxhidden_size
                         const NVTETensor x,       // BxSxhidden_size
                         const NVTETensor mu,      // BxS, FP32!
                         const NVTETensor rsigma,  // BxS, FP32!
@@ -144,7 +144,7 @@ void nvte_layernorm_bwd(const NVTETensor dz,      // BxSxhidden_size
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-void nvte_layernorm1p_bwd(const NVTETensor dz,      // BxSxhidden_size
+__attribute__((visibility("default"))) void nvte_layernorm1p_bwd(const NVTETensor dz,      // BxSxhidden_size
                           const NVTETensor x,       // BxSxhidden_size
                           const NVTETensor mu,      // BxS, FP32!
                           const NVTETensor rsigma,  // BxS, FP32!

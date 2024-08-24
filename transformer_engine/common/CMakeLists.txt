@@ -149,5 +149,8 @@ endif()
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --threads ${BUILD_THREADS_PER_JOB}")
 message(STATUS "Threads per parallel build job: ${BUILD_THREADS_PER_JOB}")
 
+# Symbols to be exposed globally are marked explicity in source.
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -fvisibility=hidden")
+
 # Install library
 install(TARGETS transformer_engine DESTINATION .)
