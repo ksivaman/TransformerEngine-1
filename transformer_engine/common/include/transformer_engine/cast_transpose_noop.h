@@ -17,12 +17,14 @@
 extern "C" {
 #endif
 
-__attribute__((visibility("default"))) void nvte_transpose_with_noop(const NVTETensor input, const NVTETensor noop, NVTETensor output,
-                              cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_transpose_with_noop(const NVTETensor input,
+                                                                     const NVTETensor noop,
+                                                                     NVTETensor output,
+                                                                     cudaStream_t stream);
 
-__attribute__((visibility("default"))) void nvte_cast_transpose_with_noop(const NVTETensor input, const NVTETensor noop,
-                                   NVTETensor cast_output, NVTETensor transposed_output,
-                                   cudaStream_t stream);
+__attribute__((visibility("default"))) void nvte_cast_transpose_with_noop(
+    const NVTETensor input, const NVTETensor noop, NVTETensor cast_output,
+    NVTETensor transposed_output, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"

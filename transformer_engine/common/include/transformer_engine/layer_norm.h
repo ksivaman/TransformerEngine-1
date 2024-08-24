@@ -42,10 +42,10 @@ extern "C" {
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-__attribute__((visibility("default"))) void nvte_layernorm_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
-                        const float epsilon, NVTETensor z, NVTETensor mu, NVTETensor rsigma,
-                        cudaStream_t stream, const int multiprocessorCount, NVTETensor workspace,
-                        NVTETensor barrier);
+__attribute__((visibility("default"))) void nvte_layernorm_fwd(
+    const NVTETensor x, const NVTETensor gamma, const NVTETensor beta, const float epsilon,
+    NVTETensor z, NVTETensor mu, NVTETensor rsigma, cudaStream_t stream,
+    const int multiprocessorCount, NVTETensor workspace, NVTETensor barrier);
 
 /*! \brief Compute LayerNorm with zero-centered gamma on the input.
  *
@@ -72,10 +72,10 @@ __attribute__((visibility("default"))) void nvte_layernorm_fwd(const NVTETensor 
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-__attribute__((visibility("default"))) void nvte_layernorm1p_fwd(const NVTETensor x, const NVTETensor gamma, const NVTETensor beta,
-                          const float epsilon, NVTETensor z, NVTETensor mu, NVTETensor rsigma,
-                          cudaStream_t stream, const int multiprocessorCount, NVTETensor workspace,
-                          NVTETensor barrier);
+__attribute__((visibility("default"))) void nvte_layernorm1p_fwd(
+    const NVTETensor x, const NVTETensor gamma, const NVTETensor beta, const float epsilon,
+    NVTETensor z, NVTETensor mu, NVTETensor rsigma, cudaStream_t stream,
+    const int multiprocessorCount, NVTETensor workspace, NVTETensor barrier);
 
 /*! \brief Compute backward of LayerNorm.
  *
@@ -106,14 +106,15 @@ __attribute__((visibility("default"))) void nvte_layernorm1p_fwd(const NVTETenso
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-__attribute__((visibility("default"))) void nvte_layernorm_bwd(const NVTETensor dz,      // BxSxhidden_size
-                        const NVTETensor x,       // BxSxhidden_size
-                        const NVTETensor mu,      // BxS, FP32!
-                        const NVTETensor rsigma,  // BxS, FP32!
-                        const NVTETensor gamma,   // hidden_size
-                        NVTETensor dx, NVTETensor dgamma, NVTETensor dbeta, NVTETensor dgamma_part,
-                        NVTETensor dbeta_part, cudaStream_t stream, const int multiprocessorCount,
-                        NVTETensor workspace, NVTETensor barrier);
+__attribute__((visibility("default"))) void nvte_layernorm_bwd(
+    const NVTETensor dz,      // BxSxhidden_size
+    const NVTETensor x,       // BxSxhidden_size
+    const NVTETensor mu,      // BxS, FP32!
+    const NVTETensor rsigma,  // BxS, FP32!
+    const NVTETensor gamma,   // hidden_size
+    NVTETensor dx, NVTETensor dgamma, NVTETensor dbeta, NVTETensor dgamma_part,
+    NVTETensor dbeta_part, cudaStream_t stream, const int multiprocessorCount, NVTETensor workspace,
+    NVTETensor barrier);
 
 /*! \brief Compute backward of LayerNorm with zero-centered gamma.
  *
@@ -144,14 +145,15 @@ __attribute__((visibility("default"))) void nvte_layernorm_bwd(const NVTETensor 
  *  \param[out]    workspace           Workspace tensor.
  *  \param[out]    barrier             Barrier tensor.
  */
-__attribute__((visibility("default"))) void nvte_layernorm1p_bwd(const NVTETensor dz,      // BxSxhidden_size
-                          const NVTETensor x,       // BxSxhidden_size
-                          const NVTETensor mu,      // BxS, FP32!
-                          const NVTETensor rsigma,  // BxS, FP32!
-                          const NVTETensor gamma,   // hidden_size
-                          NVTETensor dx, NVTETensor dgamma, NVTETensor dbeta,
-                          NVTETensor dgamma_part, NVTETensor dbeta_part, cudaStream_t stream,
-                          const int multiprocessorCount, NVTETensor workspace, NVTETensor barrier);
+__attribute__((visibility("default"))) void nvte_layernorm1p_bwd(
+    const NVTETensor dz,      // BxSxhidden_size
+    const NVTETensor x,       // BxSxhidden_size
+    const NVTETensor mu,      // BxS, FP32!
+    const NVTETensor rsigma,  // BxS, FP32!
+    const NVTETensor gamma,   // hidden_size
+    NVTETensor dx, NVTETensor dgamma, NVTETensor dbeta, NVTETensor dgamma_part,
+    NVTETensor dbeta_part, cudaStream_t stream, const int multiprocessorCount, NVTETensor workspace,
+    NVTETensor barrier);
 #ifdef __cplusplus
 }  // extern "C"
 #endif
