@@ -866,25 +866,25 @@ def _all_gather_fp8(
         quantizer.set_usage(columnwise=init_columnwise_usage)
 
     # Construct output tensor
-    out: Float8TensorBase
-    if isinstance(quantizer, Float8Quantizer):
+    if isinstance(quantizer, Quantizer):
         dtype = torch.float32
         device = "cuda"
-        if isinstance(input_, Float8Tensor):
+        if isinstance(input_, QuantizedTensor):
             dtype = input_.dtype
             device = input_.device
         out = quantizer.make_empty(out_shape, dtype=dtype, device=device)
-    elif isinstance(input, Float8Tensor):
+    elif isinstance(input, QuantizedTensor):
         out = input_.make_like(input_, shape=out_shape)
         out._data = torch.empty_like(
             out_shape,
             dtype=torch.uint8,
             device=input_.device,
         )
-        out._transpose = None
-        out._transpose_invalid = True
+        if isinstance(input, Float8Tensor):
+            out._transpose = None
+            out._transpose_invalid = True
     else:
-        raise RuntimeError("FP8TensorBase is not supported yet without Quantizer")
+        raise RuntimeError("TensorBase is not supported yet without Quantizer")
     out._scale_inv = input_._scale_inv
 
     # Perform communication

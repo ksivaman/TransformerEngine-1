@@ -331,15 +331,9 @@ class UserbuffersBackwardLinear(FusedOperation):
                     data_transpose=data_transpose,
                 )
             else:
-                dy_local = Float8Tensor.to_float8(
-                    dy_local,
-                    fp8_meta=grad_output_fp8_meta,
-                    fp8_meta_forward=False,
-                    fp8_meta_index=0,
-                    fp8_dtype=fp8_dtype,
-                    data=(ub_comm_dy.get_ubuf_output(0) if with_ub_all_gather_dy else None),
-                    with_transpose_cache=(not with_ub_all_gather_dy),
-                )
+                tensor_key = Float8Tensor.get_meta_tensor_key(False)
+                quantizer = grad_output_fp8_meta[tensor_key][0]
+                dy_local = quantizer(dy_local)
         elif not with_fp8_compute and is_float8_tensor(dy_local):
             if with_ub_all_gather_dy:
                 ub_local_buffer = ub_comm_dy.get_ubuf_output(0)
@@ -369,19 +363,9 @@ class UserbuffersBackwardLinear(FusedOperation):
                 dtype=dtype,
             )
             if with_fp8_compute and not is_float8_tensor(x_local):
-                fp8_dtype = get_fp8_te_dtype(
-                    input_fp8_meta["recipe"],
-                    fprop_tensor=True,
-                )
-                x_local = Float8Tensor.to_float8(
-                    x_local,
-                    fp8_meta=input_fp8_meta,
-                    fp8_meta_forward=True,
-                    fp8_meta_index=0,
-                    fp8_dtype=fp8_dtype,
-                    data=(ub_comm_x.get_ubuf_output(0) if with_ub_all_gather_x else None),
-                    with_transpose_cache=(not with_ub_all_gather_x),
-                )
+                tensor_key = Float8Tensor.get_meta_tensor_key(True)
+                quantizer = input_fp8_meta[tensor_key][0]
+                x_local = quantizer(x_local)
             elif not with_fp8_compute and is_float8_tensor(x_local):
                 if with_ub_all_gather_x:
                     ub_local_buffer = ub_comm_x.get_ubuf_output(0)
@@ -397,18 +381,9 @@ class UserbuffersBackwardLinear(FusedOperation):
             memory_format=torch.contiguous_format,
         )
         if with_fp8_compute and not is_float8_tensor(w):
-            fp8_dtype = get_fp8_te_dtype(
-                weight_fp8_meta["recipe"],
-                fprop_tensor=True,
-            )
-            w = Float8Tensor.to_float8(
-                w,
-                fp8_meta=weight_fp8_meta,
-                fp8_meta_forward=True,
-                fp8_meta_index=0,
-                fp8_dtype=fp8_dtype,
-                with_transpose_cache=True,
-            )
+            tensor_key = Float8Tensor.get_meta_tensor_key(True)
+            quantizer = weight_fp8_meta[tensor_key][0]
+            w = quantizer(w)
         elif not with_fp8_compute and is_float8_tensor(w):
             w = w.dequantize()
 

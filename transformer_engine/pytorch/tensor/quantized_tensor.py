@@ -123,10 +123,13 @@ class Quantizer(abc.ABC):
     ) -> QuantizedTensor:
         """Quantize tensor"""
         if out is not None:
-            return self.update_quantized(tensor, out)
-        if (not self.internal) and torch.is_grad_enabled():
-            return _QuantizeFunc.apply(tensor, self)
-        return _QuantizeFunc.forward(None, tensor, self)
+            quantized_tensor = self.update_quantized(tensor, out)
+        elif (not self.internal) and torch.is_grad_enabled():
+            quantized_tensor = _QuantizeFunc.apply(tensor, self)
+        else:
+            quantized_tensor = _QuantizeFunc.forward(None, tensor, self)
+        quantized_tensor._quantizer = self
+        return quantized_tensor
 
     def multi_quantize(self, list_of_tensors):
         """Quantize multiple tensors"""
