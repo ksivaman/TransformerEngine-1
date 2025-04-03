@@ -1448,13 +1448,9 @@ class LayerNormMLP(TransformerEngineBaseModule):
             if get_ub("fc1_dgrad").is_fp8_ubuf():
                 fp8_grad = True
         if self.ub_bulk_dgrad:
-            assert not get_ub(
-                self.ub_name + "_dgrad"
-            ).is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
+            assert not get_ub("fc1_dgrad").is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
         if self.ub_bulk_wgrad:
-            assert not get_ub(
-                self.ub_name + "_wgrad"
-            ).is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
+            assert not get_ub("fc1_wgrad").is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
 
         with self.prepare_forward(inp, num_gemms=2) as inp:
             # Get quantizers
@@ -1587,7 +1583,10 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 ]
                 grad_fc1_output_quantizer.internal = True
                 if fp8_grad:
-                    grad_input_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_INPUT2]
+                    grad_input_quantizer = self.quantizers["scaling_bwd"][
+                        tex.FP8BwdTensors.GRAD_INPUT2
+                    ]
+                    grad_input_quantizer.internal = True
 
         return (
             fc1_input_quantizer,

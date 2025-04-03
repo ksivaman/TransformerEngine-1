@@ -1416,6 +1416,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
             grad_output_quantizer.internal = True
             if fp8_grad:
                 grad_input_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_INPUT1]
+                grad_input_quantizer.internal = True
 
         return (
             input_quantizer,
