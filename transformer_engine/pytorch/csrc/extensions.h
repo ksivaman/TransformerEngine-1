@@ -425,8 +425,6 @@ class CommOverlap : torch::CustomClassHolder, public transformer_engine::CommOve
 
   ~CommOverlap() {}
 
-  void set_buffer_params(py::handle quantizer);
-
   void copy_into_buffer(py::handle input, py::handle quantizer, bool local_chunk = false);
 
   py::object get_buffer(py::handle quantizer, bool local_chunk = false,
@@ -445,8 +443,6 @@ class CommOverlapP2P : torch::CustomClassHolder, public transformer_engine::Comm
                  bool aggregate = false);
 
   ~CommOverlapP2P() {}
-
-  void set_buffer_params(py::handle quantizer);
 
   void copy_into_buffer(py::handle input, py::handle quantizer, bool local_chunk = false);
 

@@ -555,8 +555,7 @@ class _LayerNormLinear(torch.autograd.Function):
                     # Overlap dgrad reduce-scatter with wgrad compute
                     ub_obj_wgrad = get_ub(ctx.ub_name + "_wgrad")
                     ub_type_wgrad = tex.CommOverlapType.RS
-                    ub_obj_wgrad.set_buffer_params(ctx.grad_input_quantizer)
-                    dgrad_bulk = ub_obj_wgrad.get_buffer(ctx.grad_input_quantizer)
+                    dgrad_bulk = ub_obj_wgrad.get_buffer(None)
 
             # Configure quantizer for grad output tensor
             # Note: dgrad GEMM requires row-wise usage, wgrad GEMM
@@ -1299,6 +1298,14 @@ class LayerNormLinear(TransformerEngineBaseModule):
         if self.ub_overlap_rs_dgrad:
             if get_ub(self.ub_name + "_dgrad").is_fp8_ubuf():
                 fp8_grad = True
+        if self.ub_bulk_dgrad:
+            assert not get_ub(
+                self.ub_name + "_dgrad"
+            ).is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
+        if self.ub_bulk_wgrad:
+            assert not get_ub(
+                self.ub_name + "_wgrad"
+            ).is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
 
         with self.prepare_forward(
             inp, allow_non_contiguous=False  # removed .contiguous from inside the layer

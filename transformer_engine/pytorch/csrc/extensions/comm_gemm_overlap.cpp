@@ -141,12 +141,6 @@ CommOverlap::CommOverlap(const std::vector<size_t> &buffer_shape, at::ScalarType
                           num_max_streams, comm_cga_size, gemm_priority, comm_priority, num_comm_sm,
                           set_sm_margin, atomic_gemm, rs_overlap_first_gemm) {}
 
-void CommOverlap::set_buffer_params(py::handle quantizer) {
-  std::unique_ptr<te::pytorch::Quantizer> my_quantizer = te::pytorch::convert_quantizer(quantizer);
-  my_quantizer->set_quantization_params(&_ubuf);
-  _ubuf_scale_inv_initialized = true;
-}
-
 /*
 ** Helper function to copy input to _ubuf
 */
@@ -235,12 +229,6 @@ CommOverlapP2P::CommOverlapP2P(const std::vector<size_t> &buffer_shape, at::Scal
           std::bind(&CommOverlapHelper::ub_barrier, helper, _1), comm_type, num_max_streams,
           comm_cga_size, gemm_priority, comm_priority, num_comm_sm, set_sm_margin, use_ce,
           atomic_gemm, aggregate) {}
-
-void CommOverlapP2P::set_buffer_params(py::handle quantizer) {
-  std::unique_ptr<te::pytorch::Quantizer> my_quantizer = te::pytorch::convert_quantizer(quantizer);
-  my_quantizer->set_quantization_params(&_ubuf);
-  for (size_t i = 0; i < _ubufs.size(); i++) my_quantizer->set_quantization_params(&_ubufs[i]);
-}
 
 /*
 ** Copy input to _ubufs[0]

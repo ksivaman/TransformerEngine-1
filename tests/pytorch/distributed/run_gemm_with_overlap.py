@@ -550,8 +550,6 @@ def _main(opts):
             ub_obj.copy_into_buffer(inp_fp8 if opts.fp8 else inp, inp_quantizer, True)
             gemm_inp = ub_obj.get_buffer(inp_quantizer, False, inp_g.size())
         if ub_obj2 is not None:
-            if opts.fp8 and opts.fp8_output:
-                ub_obj2.set_buffer_params(out_quantizer)
             rs_out2 = torch.empty(
                 (outer_size // tp_size, hidden_size), dtype=torch.bfloat16, device="cuda"
             )
@@ -560,10 +558,6 @@ def _main(opts):
             ub_obj.copy_into_buffer(
                 bulk_inp_fp8 if opts.fp8 else bulk_inp, bulk_inp_quantizer, False
             )
-            if opts.fp8:
-                ub_obj.set_buffer_params(bulk_inp_quantizer)
-        elif opts.fp8 and opts.fp8_output:
-            ub_obj.set_buffer_params(out_quantizer)
         gemm_inp = inp_fp8 if opts.fp8 else inp
         rs_out = torch.empty(
             (outer_size // tp_size, hidden_size), dtype=torch.bfloat16, device="cuda"

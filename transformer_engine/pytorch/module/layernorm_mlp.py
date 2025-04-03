@@ -854,6 +854,9 @@ class _LayerNormMLP(torch.autograd.Function):
                     ub_obj_fc1_wgrad = get_ub("fc1_wgrad")
                     fc1_dgrad_bulk = ub_obj_fc1_wgrad.get_buffer(None)
 
+            if ctx.grad_input_quantizer is not None:
+                ctx.grad_input_quantizer.set_usage(rowwise=True, columnwise=False)
+
             # FC1 DGRAD: Unconditional
             fc1_dgrad, *_, fc1_dgrad_rs_out = general_gemm(
                 fc1_weight,
@@ -863,6 +866,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 out_dtype=ctx.activation_dtype,
                 layout="NN",
                 grad=True,
+                quantization_params=ctx.grad_input_quantizer,
                 ub=ub_obj_fc1_dgrad,
                 ub_type=ub_type_fc1_dgrad,
                 extra_output=fc1_dgrad_rs_out,
@@ -1436,10 +1440,21 @@ class LayerNormMLP(TransformerEngineBaseModule):
         if skip_fp8_weight_update is not None:
             is_first_microbatch = False
 
-        fp8_output = False
+        fp8_output, fp8_grad = False, False
         if self.ub_overlap_rs:
             if get_ub("fc2_fprop").is_fp8_ubuf():
                 fp8_output = True
+        if self.ub_overlap_rs_dgrad:
+            if get_ub("fc1_dgrad").is_fp8_ubuf():
+                fp8_grad = True
+        if self.ub_bulk_dgrad:
+            assert not get_ub(
+                self.ub_name + "_dgrad"
+            ).is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
+        if self.ub_bulk_wgrad:
+            assert not get_ub(
+                self.ub_name + "_wgrad"
+            ).is_fp8_ubuf(), "fp8_buf is unsupported for bulk overlap."
 
         with self.prepare_forward(inp, num_gemms=2) as inp:
             # Get quantizers
@@ -1452,7 +1467,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 grad_fc1_output_quantizer,
                 grad_fc2_output_quantizer,
                 grad_input_quantizer,
-            ) = self._get_quantizers(fp8_output)
+            ) = self._get_quantizers(fp8_output, fp8_grad)
 
             # Get weight tensors
             fc1_weight = self.fc1_weight
@@ -1538,7 +1553,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
             return out, ln_out
         return out
 
-    def _get_quantizers(self, fp8_output):
+    def _get_quantizers(self, fp8_output, fp8_grad):
         (
             fc1_input_quantizer,
             fc1_weight_quantizer,
@@ -1571,8 +1586,8 @@ class LayerNormMLP(TransformerEngineBaseModule):
                     tex.FP8BwdTensors.GRAD_INPUT1
                 ]
                 grad_fc1_output_quantizer.internal = True
-                grad_input_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_INPUT2]
-                grad_input_quantizer.internal = True
+                if fp8_grad:
+                    grad_input_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_INPUT2]
 
         return (
             fc1_input_quantizer,
