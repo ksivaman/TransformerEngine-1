@@ -30,13 +30,13 @@
 #include <transformer_engine/fused_attn.h>
 #include <transformer_engine/fused_rope.h>
 #include <transformer_engine/gemm.h>
+#include <transformer_engine/multi_tensor.h>
 #include <transformer_engine/normalization.h>
 #include <transformer_engine/padding.h>
 #include <transformer_engine/permutation.h>
 #include <transformer_engine/recipe.h>
 #include <transformer_engine/softmax.h>
 #include <transformer_engine/swizzle.h>
-#include <transformer_engine/multi_tensor.h>
 #include <transformer_engine/transformer_engine.h>
 #include <transformer_engine/transpose.h>
 
@@ -294,7 +294,8 @@ transformer_engine::TensorWrapper makeTransformerEngineTensor(void* data_ptr,
 
 transformer_engine::TensorWrapper makeTransformerEngineTensor(at::Tensor tensor);
 
-std::tuple<Tensor**, size_t, size_t> makeTransformerEngineTensor(std::vector<std::vector<at::Tensor>> at_tensor_lists);
+std::tuple<Tensor**, size_t, size_t> makeTransformerEngineTensor(
+    std::vector<std::vector<at::Tensor>> at_tensor_lists);
 
 TensorWrapper makeTransformerEngineTensor(py::handle tensor, py::handle quantizer);
 

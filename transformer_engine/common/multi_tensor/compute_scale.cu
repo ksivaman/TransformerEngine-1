@@ -6,17 +6,16 @@
 
 #include <limits>
 // Stringstream is a big hammer, but I want to rely on operator<< for dtype.
-#include <sstream>
-
-#include <cuda_fp8.h>
 #include <assert.h>
+#include <cuda_fp8.h>
+#include <transformer_engine/multi_tensor.h>
+#include <transformer_engine/transformer_engine.h>
+
+#include <sstream>
 
 #include "../recipe/recipe_common.cuh"
 #include "../utils.cuh"
 #include "multi_tensor_apply.cuh"
-
-#include <transformer_engine/multi_tensor.h>
-#include <transformer_engine/transformer_engine.h>
 
 namespace transformer_engine {
 namespace multi_tensor_compute_scale {
@@ -56,11 +55,14 @@ struct ComputeScaleAndScaleInvFunctor {
   }
 };
 
-void multi_tensor_compute_scale_and_scale_inv_cuda(
-    int chunk_size, Tensor noop_flag, Tensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-    float max_fp8, bool force_pow_2_scales, float epsilon) {
-  multi_tensor_apply<3>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
-                        ComputeScaleAndScaleInvFunctor(), max_fp8, force_pow_2_scales, epsilon);
+void multi_tensor_compute_scale_and_scale_inv_cuda(int chunk_size, Tensor noop_flag,
+                                                   Tensor **tensor_lists,
+                                                   const size_t num_tensor_lists,
+                                                   const size_t num_tensors_per_list, float max_fp8,
+                                                   bool force_pow_2_scales, float epsilon) {
+  multi_tensor_apply<3>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
+                        num_tensors_per_list, ComputeScaleAndScaleInvFunctor(), max_fp8,
+                        force_pow_2_scales, epsilon);
   NVTE_CHECK_CUDA(cudaGetLastError());
 }
 
@@ -68,13 +70,12 @@ void multi_tensor_compute_scale_and_scale_inv_cuda(
 }  // namespace transformer_engine
 
 void nvte_multi_tensor_compute_scale_and_scale_inv_cuda(
-  int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-  float max_fp8, int force_pow_2_scales, float epsilon) {
+    int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
+    const size_t num_tensors_per_list, float max_fp8, int force_pow_2_scales, float epsilon) {
   NVTE_API_CALL(nvte_multi_tensor_compute_scale_and_scale_inv_cuda);
   using namespace transformer_engine;
 
   multi_tensor_compute_scale::multi_tensor_compute_scale_and_scale_inv_cuda(
-    chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists), num_tensor_lists, num_tensors_per_list,
-    max_fp8, force_pow_2_scales, epsilon
-  );
+      chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
+      num_tensor_lists, num_tensors_per_list, max_fp8, force_pow_2_scales, epsilon);
 }

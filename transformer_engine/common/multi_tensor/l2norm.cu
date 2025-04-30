@@ -4,16 +4,13 @@
  * See LICENSE for license information.
  ************************************************************************/
 
-#include <cuda_fp8.h>
-
 #include <assert.h>
-
-#include "../utils.cuh"
-#include "multi_tensor_apply.cuh"
-
+#include <cuda_fp8.h>
 #include <transformer_engine/multi_tensor.h>
 #include <transformer_engine/transformer_engine.h>
 
+#include "../utils.cuh"
+#include "multi_tensor_apply.cuh"
 
 namespace transformer_engine {
 namespace multi_tensor_l2norm {
@@ -311,17 +308,18 @@ __global__ void cleanup_v2(float *output, float *output_per_tensor, float *ret,
   }
 }
 
-void multi_tensor_l2norm_cuda(
-    int chunk_size, Tensor noop_flag, Tensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-    Tensor output, Tensor output_per_tensor, Tensor ret, Tensor ret_per_tensor,
-    bool per_tensor, int max_chunks_per_tensor, cudaStream_t stream) {
-
+void multi_tensor_l2norm_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_lists,
+                              const size_t num_tensor_lists, const size_t num_tensors_per_list,
+                              Tensor output, Tensor output_per_tensor, Tensor ret,
+                              Tensor ret_per_tensor, bool per_tensor, int max_chunks_per_tensor,
+                              cudaStream_t stream) {
   TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
       tensor_lists[0][0].dtype(), dtype,
-      multi_tensor_apply<1>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
-                            L2NormFunctor<dtype>(), reinterpret_cast<float *>(output.data.dptr),
-                            per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr, per_tensor,
-                            max_chunks_per_tensor);)
+      multi_tensor_apply<1>(
+          BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
+          L2NormFunctor<dtype>(), reinterpret_cast<float *>(output.data.dptr),
+          per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr, per_tensor,
+          max_chunks_per_tensor);)
 
   NVTE_CHECK_CUDA(cudaGetLastError());
 
@@ -329,23 +327,27 @@ void multi_tensor_l2norm_cuda(
   // I could get rid of these by hacking the functor + multi tensor harness with persistence
   // logic, but keeping it simple for now
   cleanup<<<per_tensor ? num_tensors_per_list : 1, 512, 0, stream>>>(
-      reinterpret_cast<float *>(output.data.dptr), per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr,
-      reinterpret_cast<float *>(ret.data.dptr), per_tensor ? reinterpret_cast<float *>(ret_per_tensor.data.dptr) : nullptr, per_tensor,
+      reinterpret_cast<float *>(output.data.dptr),
+      per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr,
+      reinterpret_cast<float *>(ret.data.dptr),
+      per_tensor ? reinterpret_cast<float *>(ret_per_tensor.data.dptr) : nullptr, per_tensor,
       max_chunks_per_tensor);
 }
 
-void multi_tensor_unscale_l2norm_cuda(
-    int chunk_size, Tensor noop_flag, Tensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-    Tensor output, Tensor output_per_tensor, Tensor ret, Tensor ret_per_tensor,
-    Tensor inv_scale, bool per_tensor, int max_chunks_per_tensor, cudaStream_t stream) {
-
+void multi_tensor_unscale_l2norm_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_lists,
+                                      const size_t num_tensor_lists,
+                                      const size_t num_tensors_per_list, Tensor output,
+                                      Tensor output_per_tensor, Tensor ret, Tensor ret_per_tensor,
+                                      Tensor inv_scale, bool per_tensor, int max_chunks_per_tensor,
+                                      cudaStream_t stream) {
   TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
       tensor_lists[0][0].dtype(), dtype,
-      multi_tensor_apply<1>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
-                            UnscaleL2NormFunctor<dtype>(), reinterpret_cast<float *>(inv_scale.data.dptr),
-                            reinterpret_cast<float *>(output.data.dptr),
-                            per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr, per_tensor,
-                            max_chunks_per_tensor);)
+      multi_tensor_apply<1>(
+          BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
+          UnscaleL2NormFunctor<dtype>(), reinterpret_cast<float *>(inv_scale.data.dptr),
+          reinterpret_cast<float *>(output.data.dptr),
+          per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr, per_tensor,
+          max_chunks_per_tensor);)
 
   NVTE_CHECK_CUDA(cudaGetLastError());
 
@@ -353,41 +355,45 @@ void multi_tensor_unscale_l2norm_cuda(
   // I could get rid of these by hacking the functor + multi tensor harness with persistence
   // logic, but keeping it simple for now
   cleanup<<<per_tensor ? num_tensors_per_list : 1, 512, 0, stream>>>(
-      reinterpret_cast<float *>(output.data.dptr), per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr,
-      reinterpret_cast<float *>(ret.data.dptr), per_tensor ? reinterpret_cast<float *>(ret_per_tensor.data.dptr) : nullptr, per_tensor,
+      reinterpret_cast<float *>(output.data.dptr),
+      per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr,
+      reinterpret_cast<float *>(ret.data.dptr),
+      per_tensor ? reinterpret_cast<float *>(ret_per_tensor.data.dptr) : nullptr, per_tensor,
       max_chunks_per_tensor);
 }
 
 }  // namespace multi_tensor_l2norm
 }  // namespace transformer_engine
 
-
-void nvte_multi_tensor_l2norm_cuda(
-  int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-  NVTETensor output, NVTETensor output_per_tensor, NVTETensor ret, NVTETensor ret_per_tensor,
-  int per_tensor, int max_chunks_per_tensor, cudaStream_t stream) {
+void nvte_multi_tensor_l2norm_cuda(int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists,
+                                   const size_t num_tensor_lists, const size_t num_tensors_per_list,
+                                   NVTETensor output, NVTETensor output_per_tensor, NVTETensor ret,
+                                   NVTETensor ret_per_tensor, int per_tensor,
+                                   int max_chunks_per_tensor, cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_l2norm_cuda);
   using namespace transformer_engine;
 
   multi_tensor_l2norm::nvte_multi_tensor_l2norm_cuda(
-    chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
-    num_tensor_lists, num_tensors_per_list, reinterpret_cast<Tensor *>(output), reinterpret_cast<Tensor *>(output_per_tensor),
-    reinterpret_cast<Tensor *>(ret), reinterpret_cast<Tensor *>(ret_per_tensor),
-    per_tensor, max_chunks_per_tensor, stream
-  );
+      chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
+      num_tensor_lists, num_tensors_per_list, reinterpret_cast<Tensor *>(output),
+      reinterpret_cast<Tensor *>(output_per_tensor), reinterpret_cast<Tensor *>(ret),
+      reinterpret_cast<Tensor *>(ret_per_tensor), per_tensor, max_chunks_per_tensor, stream);
 }
 
-void nvte_multi_tensor_unscale_l2norm_cuda(
-  int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-  NVTETensor output, NVTETensor output_per_tensor, NVTETensor ret, NVTETensor ret_per_tensor, NVTETensor inv_scale,
-  int per_tensor, int max_chunks_per_tensor, cudaStream_t stream) {
+void nvte_multi_tensor_unscale_l2norm_cuda(int chunk_size, NVTETensor noop_flag,
+                                           NVTETensor **tensor_lists, const size_t num_tensor_lists,
+                                           const size_t num_tensors_per_list, NVTETensor output,
+                                           NVTETensor output_per_tensor, NVTETensor ret,
+                                           NVTETensor ret_per_tensor, NVTETensor inv_scale,
+                                           int per_tensor, int max_chunks_per_tensor,
+                                           cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_unscale_l2norm_cuda);
   using namespace transformer_engine;
 
   multi_tensor_l2norm::multi_tensor_unscale_l2norm_cuda(
-    chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
-    num_tensor_lists, num_tensors_per_list, reinterpret_cast<Tensor *>(output), reinterpret_cast<Tensor *>(output_per_tensor),
-    reinterpret_cast<Tensor *>(ret), reinterpret_cast<Tensor *>(ret_per_tensor), reinterpret_cast<Tensor *>(inv_scale),
-    per_tensor, max_chunks_per_tensor, stream
-  );
+      chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
+      num_tensor_lists, num_tensors_per_list, reinterpret_cast<Tensor *>(output),
+      reinterpret_cast<Tensor *>(output_per_tensor), reinterpret_cast<Tensor *>(ret),
+      reinterpret_cast<Tensor *>(ret_per_tensor), reinterpret_cast<Tensor *>(inv_scale), per_tensor,
+      max_chunks_per_tensor, stream);
 }

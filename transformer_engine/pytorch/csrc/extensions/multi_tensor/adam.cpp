@@ -6,7 +6,6 @@
 
 #include "extensions.h"
 
-
 void multi_tensor_adam_cuda(int chunk_size, at::Tensor noop_flag,
                             std::vector<std::vector<at::Tensor>> tensor_lists, const float lr,
                             const float beta1, const float beta2, const float epsilon,
@@ -18,10 +17,9 @@ void multi_tensor_adam_cuda(int chunk_size, at::Tensor noop_flag,
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
   auto [tensor_lists_ptr, num_lists, num_tensors] = makeTransformerEngineTensor(tensor_lists);
 
-  nvte_multi_tensor_adam_cuda(
-    chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors,
-    lr, beta1, beta2, epsilon, step, mode, bias_correction, weight_decay
-  );
+  nvte_multi_tensor_adam_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists,
+                              num_tensors, lr, beta1, beta2, epsilon, step, mode, bias_correction,
+                              weight_decay);
 }
 
 void multi_tensor_adam_param_remainder_cuda(int chunk_size, at::Tensor noop_flag,
@@ -35,10 +33,9 @@ void multi_tensor_adam_param_remainder_cuda(int chunk_size, at::Tensor noop_flag
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
   auto [tensor_lists_ptr, num_lists, num_tensors] = makeTransformerEngineTensor(tensor_lists);
 
-  nvte_multi_tensor_adam_param_remainder_cuda(
-    chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors,
-    lr, beta1, beta2, epsilon, step, mode, bias_correction, weight_decay
-  );
+  nvte_multi_tensor_adam_param_remainder_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr,
+                                              num_lists, num_tensors, lr, beta1, beta2, epsilon,
+                                              step, mode, bias_correction, weight_decay);
 }
 
 void multi_tensor_adam_fp8_cuda(int chunk_size, at::Tensor noop_flag,
@@ -52,11 +49,9 @@ void multi_tensor_adam_fp8_cuda(int chunk_size, at::Tensor noop_flag,
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
   auto [tensor_lists_ptr, num_lists, num_tensors] = makeTransformerEngineTensor(tensor_lists);
 
-  nvte_multi_tensor_adam_fp8_cuda(
-    chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors,
-    lr, beta1, beta2, epsilon, step, mode, bias_correction, weight_decay,
-    static_cast<NVTEDType>(fp8_dtype)
-  );
+  nvte_multi_tensor_adam_fp8_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists,
+                                  num_tensors, lr, beta1, beta2, epsilon, step, mode,
+                                  bias_correction, weight_decay, static_cast<NVTEDType>(fp8_dtype));
 }
 
 void multi_tensor_adam_capturable_cuda(int chunk_size, at::Tensor noop_flag,
@@ -75,10 +70,8 @@ void multi_tensor_adam_capturable_cuda(int chunk_size, at::Tensor noop_flag,
   auto inv_scale_cu = makeTransformerEngineTensor(inv_scale);
 
   nvte_multi_tensor_adam_capturable_cuda(
-    chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors,
-    lr.data(), beta1, beta2, epsilon, step.data(), mode, bias_correction, weight_decay,
-    inv_scale_cu.data()
-  );
+      chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors, lr.data(), beta1,
+      beta2, epsilon, step.data(), mode, bias_correction, weight_decay, inv_scale_cu.data());
 }
 
 void multi_tensor_adam_capturable_master_cuda(int chunk_size, at::Tensor noop_flag,
@@ -97,8 +90,6 @@ void multi_tensor_adam_capturable_master_cuda(int chunk_size, at::Tensor noop_fl
   auto inv_scale_cu = makeTransformerEngineTensor(inv_scale);
 
   nvte_multi_tensor_adam_capturable_master_cuda(
-    chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors,
-    lr.data(), beta1, beta2, epsilon, step.data(), mode, bias_correction, weight_decay,
-    inv_scale_cu.data()
-  );
+      chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors, lr.data(), beta1,
+      beta2, epsilon, step.data(), mode, bias_correction, weight_decay, inv_scale_cu.data());
 }

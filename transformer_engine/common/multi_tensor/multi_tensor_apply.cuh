@@ -6,7 +6,6 @@
 #pragma once
 
 #include <assert.h>
-
 #include <transformer_engine/multi_tensor.h>
 #include <transformer_engine/transformer_engine.h>
 
@@ -45,12 +44,13 @@ __global__ void multi_tensor_apply_kernel(int64_t chunk_size, volatile int *noop
 
 template <int depth, bool USE_FP8 = false, typename T, typename... ArgTypes>
 void multi_tensor_apply(int64_t block_size, int64_t chunk_size, const Tensor &noop_flag,
-                        const Tensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
-                        T callable, ArgTypes... args, cudaStream_t stream) {
+                        const Tensor **tensor_lists, const size_t num_tensor_lists,
+                        const size_t num_tensors_per_list, T callable, ArgTypes... args,
+                        cudaStream_t stream) {
   if constexpr (USE_FP8) {
     NVTE_CHECK(num_tensor_lists == depth + 3,
-                "tensor_lists.size() != depth + 3, tensor_lists should have 3 more tensors (scale, "
-                "amax, scale_inv) for fp8");
+               "tensor_lists.size() != depth + 3, tensor_lists should have 3 more tensors (scale, "
+               "amax, scale_inv) for fp8");
   } else {
     NVTE_CHECK(num_tensor_lists == depth, "tensor_lists.size() != depth");
   }
@@ -62,8 +62,7 @@ void multi_tensor_apply(int64_t block_size, int64_t chunk_size, const Tensor &no
   int loc_tensor_info = 0;
   for (int t = 0; t < num_tensors_per_list; t++) {
     tl.sizes[loc_tensor_info] = tensor_lists[0][t].numel();
-    for (int d = 0; d < depth; d++)
-      tl.addresses[d][loc_tensor_info] = tensor_lists[d][t].data.dptr;
+    for (int d = 0; d < depth; d++) tl.addresses[d][loc_tensor_info] = tensor_lists[d][t].data.dptr;
     if constexpr (USE_FP8) {
       for (int i = 0; i < 3; i++)
         tl.fp8_meta_addresses[i][loc_tensor_info] = tensor_lists[depth + i][t].data.dptr;
@@ -83,9 +82,7 @@ void multi_tensor_apply(int64_t block_size, int64_t chunk_size, const Tensor &no
       bool last_chunk = (t == num_tensors_per_list - 1 && chunk == chunks_this_tensor - 1);
       if (tensors_full || blocks_full || last_chunk) {
         multi_tensor_apply_kernel<<<loc_block_info, block_size, 0, stream>>>(
-            chunk_size,
-            reinterpret_cast<int *>(noop_flag.data.dptr),
-            tl, callable, args...);
+            chunk_size, reinterpret_cast<int *>(noop_flag.data.dptr), tl, callable, args...);
 
         NVTE_CHECK_CUDA(cudaGetLastError());
 
