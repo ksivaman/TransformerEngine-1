@@ -16,5 +16,6 @@ void multi_tensor_compute_scale_and_scale_inv_cuda(
   auto [tensor_lists_ptr, num_lists, num_tensors] = makeTransformerEngineTensor(tensor_lists);
 
   nvte_multi_tensor_scale_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists,
-                               num_tensors, max_fp8, force_pow_2_scales, epsilon);
+                               num_tensors, max_fp8, force_pow_2_scales, epsilon,
+                               at::cuda::getCurrentCUDAStream());
 }

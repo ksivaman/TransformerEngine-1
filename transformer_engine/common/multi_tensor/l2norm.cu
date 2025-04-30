@@ -29,6 +29,88 @@ __device__ __forceinline__ void load_store(T *dst, T *src, int dst_offset, int s
   ((LT *)dst)[dst_offset] = ((LT *)src)[src_offset];  // NOLINT(*)
 }
 
+template <typename T>
+__device__ __forceinline__ T
+reduce_block_into_lanes(T *x, T val, int lanes = 1,
+                        bool share_result = false) {  // lanes is intended to be <= 32.
+  int tid = threadIdx.x + threadIdx.y * blockDim.x;
+  int blockSize = blockDim.x * blockDim.y;  // blockSize is intended to be a multiple of 32.
+
+  if (blockSize >= 64) {
+    x[tid] = val;
+    __syncthreads();
+  }
+
+#pragma unroll
+  for (int i = (blockSize >> 1); i >= 64; i >>= 1) {
+    if (tid < i) x[tid] = x[tid] + x[tid + i];
+    __syncthreads();
+  }
+
+  T final;
+
+  if (tid < 32) {
+    if (blockSize >= 64)
+      final = x[tid] + x[tid + 32];
+    else
+      final = val;
+      // __SYNCWARP();
+
+#pragma unroll
+    for (int i = 16; i >= lanes; i >>= 1) final = final + __shfl_down_sync(0xffffffff, final, i);
+  }
+
+  if (share_result) {
+    if (tid < lanes) x[tid] = final;  // EpilogueOp
+    // Make sure the smem result is visible to all warps.
+  }
+  __syncthreads();
+  // Avoid potential write before read race when reduce_block_into_lanes is called back to back
+
+  return final;
+}
+
+template <typename T>
+__device__ __forceinline__ T
+reduce_block_into_lanes_max_op(T *x, T val, int lanes = 1,
+                               bool share_result = false) {  // lanes is intended to be <= 32.
+  int tid = threadIdx.x + threadIdx.y * blockDim.x;
+  int blockSize = blockDim.x * blockDim.y;  // blockSize is intended to be a multiple of 32.
+
+  if (blockSize >= 64) {
+    x[tid] = val;
+    __syncthreads();
+  }
+
+#pragma unroll
+  for (int i = (blockSize >> 1); i >= 64; i >>= 1) {
+    if (tid < i) x[tid] = fmaxf(fabsf(x[tid]), fabsf(x[tid + i]));
+    __syncthreads();
+  }
+
+  T final;
+
+  if (tid < 32) {
+    if (blockSize >= 64)
+      final = fmaxf(fabsf(x[tid]), fabsf(x[tid + 32]));
+    else
+      final = val;
+      // __SYNCWARP();
+
+#pragma unroll
+    for (int i = 16; i >= lanes; i >>= 1)
+      final = fmaxf(fabsf(final), fabsf(__shfl_down_sync(0xffffffff, final, i)));
+  }
+
+  if (share_result) {
+    if (tid < lanes) x[tid] = final;  // EpilogueOp
+    // Make sure the smem result is visible to all warps.
+    __syncthreads();
+  }
+
+  return final;
+}
+
 template <typename x_t>
 struct L2NormFunctor {
   __device__ __forceinline__ void operator()(int chunk_size, volatile int *noop_gmem,
@@ -317,7 +399,7 @@ void multi_tensor_l2norm_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_
       tensor_lists[0][0].dtype(), dtype,
       multi_tensor_apply<1>(
           BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
-          L2NormFunctor<dtype>(), reinterpret_cast<float *>(output.data.dptr),
+          L2NormFunctor<dtype>(), stream, reinterpret_cast<float *>(output.data.dptr),
           per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr, per_tensor,
           max_chunks_per_tensor);)
 
@@ -344,7 +426,7 @@ void multi_tensor_unscale_l2norm_cuda(int chunk_size, Tensor noop_flag, Tensor *
       tensor_lists[0][0].dtype(), dtype,
       multi_tensor_apply<1>(
           BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
-          UnscaleL2NormFunctor<dtype>(), reinterpret_cast<float *>(inv_scale.data.dptr),
+          UnscaleL2NormFunctor<dtype>(), stream, reinterpret_cast<float *>(inv_scale.data.dptr),
           reinterpret_cast<float *>(output.data.dptr),
           per_tensor ? reinterpret_cast<float *>(output_per_tensor.data.dptr) : nullptr, per_tensor,
           max_chunks_per_tensor);)
@@ -373,11 +455,11 @@ void nvte_multi_tensor_l2norm_cuda(int chunk_size, NVTETensor noop_flag, NVTETen
   NVTE_API_CALL(nvte_multi_tensor_l2norm_cuda);
   using namespace transformer_engine;
 
-  multi_tensor_l2norm::nvte_multi_tensor_l2norm_cuda(
-      chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
-      num_tensor_lists, num_tensors_per_list, reinterpret_cast<Tensor *>(output),
-      reinterpret_cast<Tensor *>(output_per_tensor), reinterpret_cast<Tensor *>(ret),
-      reinterpret_cast<Tensor *>(ret_per_tensor), per_tensor, max_chunks_per_tensor, stream);
+  multi_tensor_l2norm::multi_tensor_l2norm_cuda(
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
+      num_tensor_lists, num_tensors_per_list, *reinterpret_cast<Tensor *>(output),
+      *reinterpret_cast<Tensor *>(output_per_tensor), *reinterpret_cast<Tensor *>(ret),
+      *reinterpret_cast<Tensor *>(ret_per_tensor), per_tensor, max_chunks_per_tensor, stream);
 }
 
 void nvte_multi_tensor_unscale_l2norm_cuda(int chunk_size, NVTETensor noop_flag,
@@ -391,9 +473,9 @@ void nvte_multi_tensor_unscale_l2norm_cuda(int chunk_size, NVTETensor noop_flag,
   using namespace transformer_engine;
 
   multi_tensor_l2norm::multi_tensor_unscale_l2norm_cuda(
-      chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
-      num_tensor_lists, num_tensors_per_list, reinterpret_cast<Tensor *>(output),
-      reinterpret_cast<Tensor *>(output_per_tensor), reinterpret_cast<Tensor *>(ret),
-      reinterpret_cast<Tensor *>(ret_per_tensor), reinterpret_cast<Tensor *>(inv_scale), per_tensor,
-      max_chunks_per_tensor, stream);
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists),
+      num_tensor_lists, num_tensors_per_list, *reinterpret_cast<Tensor *>(output),
+      *reinterpret_cast<Tensor *>(output_per_tensor), *reinterpret_cast<Tensor *>(ret),
+      *reinterpret_cast<Tensor *>(ret_per_tensor), *reinterpret_cast<Tensor *>(inv_scale),
+      per_tensor, max_chunks_per_tensor, stream);
 }

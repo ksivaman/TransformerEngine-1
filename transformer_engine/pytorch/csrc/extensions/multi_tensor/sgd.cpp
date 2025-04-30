@@ -18,5 +18,5 @@ void multi_tensor_sgd_cuda(int chunk_size, at::Tensor noop_flag,
 
   nvte_multi_tensor_sgd_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists,
                              num_tensors, wd, momentum, dampening, lr, nesterov, first_run,
-                             wd_after_momentum, scale);
+                             wd_after_momentum, scale, at::cuda::getCurrentCUDAStream());
 }

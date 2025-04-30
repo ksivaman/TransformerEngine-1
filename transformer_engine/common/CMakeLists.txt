@@ -55,7 +55,7 @@ list(APPEND transformer_engine_SOURCES
      common.cu
      multi_tensor/adam.cu
      multi_tensor/compute_scale.cu
-     multi_tensor/l2_norm.cu
+     multi_tensor/l2norm.cu
      multi_tensor/scale.cu
      multi_tensor/sgd.cu
      transpose/cast_transpose.cu

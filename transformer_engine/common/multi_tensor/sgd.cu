@@ -127,7 +127,8 @@ struct SGDFunctor {
 void multi_tensor_sgd_cuda(int chunk_size, Tensor noop_flag, Tensor** tensor_lists,
                            const size_t num_tensor_lists, const size_t num_tensors_per_list,
                            float wd, float momentum, float dampening, float lr, bool nesterov,
-                           bool first_run, bool wd_after_momentum, float scale) {
+                           bool first_run, bool wd_after_momentum, float scale,
+                           cudaStream_t stream) {
   auto grad_type = tensor_lists[0][0].dtype();
   auto weight_type = tensor_lists[1][0].dtype();
 
@@ -150,28 +151,28 @@ void multi_tensor_sgd_cuda(int chunk_size, Tensor noop_flag, Tensor** tensor_lis
   // Case 1. fp16, fp16, fp16, No
   if (grad_type == DType::kFloat16 && weight_type == DType::kFloat16 && num_tensor_lists == 3) {
     multi_tensor_apply<3>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
-                          num_tensors_per_list, SGDFunctor<3, fp16, fp16>(), wd, momentum,
+                          num_tensors_per_list, SGDFunctor<3, fp16, fp16>(), stream, wd, momentum,
                           dampening, lr, nesterov, first_run, wd_after_momentum, scale);
   }
   // Case 2. fp32, fp32, fp32, No
   else if (grad_type == DType::kFloat32 &&  // NOLINT(*)
            weight_type == DType::kFloat32 && num_tensor_lists == 3) {
     multi_tensor_apply<3>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
-                          num_tensors_per_list, SGDFunctor<3, float, float>(), wd, momentum,
+                          num_tensors_per_list, SGDFunctor<3, float, float>(), stream, wd, momentum,
                           dampening, lr, nesterov, first_run, wd_after_momentum, scale);
   }
   // Case 3. fp16, fp32, fp32, Yes
   else if (grad_type == DType::kFloat16 &&  // NOLINT(*)
            weight_type == DType::kFloat32 && num_tensor_lists == 4) {
     multi_tensor_apply<4>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
-                          num_tensors_per_list, SGDFunctor<4, fp16, float>(), wd, momentum,
+                          num_tensors_per_list, SGDFunctor<4, fp16, float>(), stream, wd, momentum,
                           dampening, lr, nesterov, first_run, wd_after_momentum, scale);
   }
   // Case 4. fp32, fp32, fp32, Yes
   else if (grad_type == DType::kFloat32 &&  // NOLINT(*)
            weight_type == DType::kFloat32 && num_tensor_lists == 4) {
     multi_tensor_apply<4>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
-                          num_tensors_per_list, SGDFunctor<4, float, float>(), wd, momentum,
+                          num_tensors_per_list, SGDFunctor<4, float, float>(), stream, wd, momentum,
                           dampening, lr, nesterov, first_run, wd_after_momentum, scale);
   } else {
     NVTE_ERROR(
@@ -188,12 +189,13 @@ void multi_tensor_sgd_cuda(int chunk_size, Tensor noop_flag, Tensor** tensor_lis
 void nvte_multi_tensor_sgd_cuda(int chunk_size, NVTETensor noop_flag, NVTETensor** tensor_lists,
                                 const size_t num_tensor_lists, const size_t num_tensors_per_list,
                                 float wd, float momentum, float dampening, float lr, int nesterov,
-                                int first_run, int wd_after_momentum, float scale) {
+                                int first_run, int wd_after_momentum, float scale,
+                                cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_sgd_cuda);
   using namespace transformer_engine;
 
   multi_tensor_sgd::multi_tensor_sgd_cuda(
-      chunk_size, reinterpret_cast<Tensor*>(noop_flag), reinterpret_cast<Tensor**>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor*>(noop_flag), reinterpret_cast<Tensor**>(tensor_lists),
       num_tensor_lists, num_tensors_per_list, wd, momentum, dampening, lr, nesterov, first_run,
-      wd_after_momentum, scale);
+      wd_after_momentum, scale, stream);
 }

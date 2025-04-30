@@ -35,45 +35,51 @@ void nvte_multi_tensor_adam_cuda(int chunk_size, NVTETensor noop_flag, NVTETenso
                                  const size_t num_tensor_lists, const size_t num_tensors_per_list,
                                  const float lr, const float beta1, const float beta2,
                                  const float epsilon, const int step, const int mode,
-                                 const int bias_correction, const float weight_decay);
+                                 const int bias_correction, const float weight_decay,
+                                 cudaStream_t stream);
 
 void nvte_multi_tensor_adam_param_remainder_cuda(
     int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
     const size_t num_tensors_per_list, const float lr, const float beta1, const float beta2,
     const float epsilon, const int step, const int mode, const int bias_correction,
-    const float weight_decay);
+    const float weight_decay, cudaStream_t stream);
 
 void nvte_multi_tensor_adam_fp8_cuda(int chunk_size, NVTETensor noop_flag,
                                      NVTETensor **tensor_lists, const size_t num_tensor_lists,
                                      const size_t num_tensors_per_list, const float lr,
                                      const float beta1, const float beta2, const float epsilon,
                                      const int step, const int mode, const int bias_correction,
-                                     const float weight_decay, const NVTEDType fp8_dtype);
+                                     const float weight_decay, const NVTEDType fp8_dtype,
+                                     cudaStream_t stream);
 
 void nvte_multi_tensor_adam_capturable_cuda(
     int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
     const size_t num_tensors_per_list, NVTETensor lr, const float beta1, const float beta2,
     const float epsilon, NVTETensor step, const int mode, const int bias_correction,
-    const float weight_decay, NVTETensor inv_scale);
+    const float weight_decay, NVTETensor inv_scale, cudaStream_t stream);
 
 void nvte_multi_tensor_adam_capturable_master_cuda(
     int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
     const size_t num_tensors_per_list, NVTETensor lr, const float beta1, const float beta2,
     const float epsilon, NVTETensor step, const int mode, const int bias_correction,
-    const float weight_decay, NVTETensor inv_scale);
+    const float weight_decay, NVTETensor inv_scale, cudaStream_t stream);
 
 void nvte_multi_tensor_sgd_cuda(int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists,
                                 const size_t num_tensor_lists, const size_t num_tensors_per_list,
                                 float wd, float momentum, float dampening, float lr, int nesterov,
-                                int first_run, int wd_after_momentum, float scale);
+                                int first_run, int wd_after_momentum, float scale,
+                                cudaStream_t stream);
 
 void nvte_multi_tensor_scale_cuda(int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists,
                                   const size_t num_tensor_lists, const size_t num_tensors_per_list,
-                                  , float scale);
+                                  float scale, cudaStream_t stream);
 
-void nvte_multi_tensor_compute_scale_and_scale_inv_cuda(
-    int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
-    const size_t num_tensors_per_list, float max_fp8, int force_pow_2_scales, float epsilon);
+void nvte_multi_tensor_compute_scale_and_scale_inv_cuda(int chunk_size, NVTETensor noop_flag,
+                                                        NVTETensor **tensor_lists,
+                                                        const size_t num_tensor_lists,
+                                                        const size_t num_tensors_per_list,
+                                                        float max_fp8, int force_pow_2_scales,
+                                                        float epsilon, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"
