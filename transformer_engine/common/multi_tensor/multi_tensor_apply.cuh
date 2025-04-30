@@ -45,37 +45,22 @@ __global__ void multi_tensor_apply_kernel(int64_t chunk_size, volatile int *noop
 
 template <int depth, bool USE_FP8 = false, typename T, typename... ArgTypes>
 void multi_tensor_apply(int64_t block_size, int64_t chunk_size, const Tensor &noop_flag,
-                        const std::vector<std::vector<Tensor>> &tensor_lists, T callable,
-                        ArgTypes... args, cudaStream_t stream) {
+                        const Tensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
+                        T callable, ArgTypes... args, cudaStream_t stream) {
   if constexpr (USE_FP8) {
-    NVTE_CHECK(tensor_lists.size() == depth + 3,
+    NVTE_CHECK(num_tensor_lists == depth + 3,
                 "tensor_lists.size() != depth + 3, tensor_lists should have 3 more tensors (scale, "
                 "amax, scale_inv) for fp8");
   } else {
-    NVTE_CHECK(tensor_lists.size() == depth, "tensor_lists.size() != depth");
+    NVTE_CHECK(num_tensor_lists == depth, "tensor_lists.size() != depth");
   }
-  int len0 = tensor_lists[0].size();
-  NVTE_CHECK(len0 > 0, "tensor_lists[0].size() is not > 0");
-  for (int l = 0; l < depth; l++) {  // No range-based for because I need indices
-    NVTE_CHECK(tensor_lists[l].size() == len0, "Size mismatch among tensor lists");
-    for (int t = 0; t < tensor_lists[l].size(); t++) {
-      NVTE_CHECK(tensor_lists[l][t].numel() == tensor_lists[0][t].numel(), "Size mismatch");
-    }
-  }
-
-  if constexpr (USE_FP8) {
-    NVTE_CHECK(tensor_lists[depth].size() == len0 && tensor_lists[depth + 1].size() == len0,
-                "Size mismatch among tensor lists");
-  }
-
-  int ntensors = tensor_lists[0].size();
 
   TensorListMetadata<depth, USE_FP8> tl;
 
   tl.start_tensor_this_launch = 0;
   int loc_block_info = 0;
   int loc_tensor_info = 0;
-  for (int t = 0; t < ntensors; t++) {
+  for (int t = 0; t < num_tensors_per_list; t++) {
     tl.sizes[loc_tensor_info] = tensor_lists[0][t].numel();
     for (int d = 0; d < depth; d++)
       tl.addresses[d][loc_tensor_info] = tensor_lists[d][t].data.dptr;
@@ -95,7 +80,7 @@ void multi_tensor_apply(int64_t block_size, int64_t chunk_size, const Tensor &no
       bool tensors_full =
           (loc_tensor_info == depth_to_max_tensors[depth - 1] && chunk == chunks_this_tensor - 1);
       bool blocks_full = (loc_block_info == depth_to_max_blocks[depth - 1]);
-      bool last_chunk = (t == ntensors - 1 && chunk == chunks_this_tensor - 1);
+      bool last_chunk = (t == num_tensors_per_list - 1 && chunk == chunks_this_tensor - 1);
       if (tensors_full || blocks_full || last_chunk) {
         multi_tensor_apply_kernel<<<loc_block_info, block_size, 0, stream>>>(
             chunk_size,

@@ -57,12 +57,24 @@ struct ComputeScaleAndScaleInvFunctor {
 };
 
 void multi_tensor_compute_scale_and_scale_inv_cuda(
-    int chunk_size, Tensor noop_flag, std::vector<std::vector<Tensor>> tensor_lists,
+    int chunk_size, Tensor noop_flag, Tensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
     float max_fp8, bool force_pow_2_scales, float epsilon) {
-  multi_tensor_apply<3>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists,
+  multi_tensor_apply<3>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists, num_tensors_per_list,
                         ComputeScaleAndScaleInvFunctor(), max_fp8, force_pow_2_scales, epsilon);
   NVTE_CHECK_CUDA(cudaGetLastError());
 }
 
 }  // namespace multi_tensor_compute_scale
 }  // namespace transformer_engine
+
+void nvte_multi_tensor_compute_scale_and_scale_inv_cuda(
+  int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists, const size_t num_tensors_per_list,
+  float max_fp8, int force_pow_2_scales, float epsilon) {
+  NVTE_API_CALL(nvte_multi_tensor_compute_scale_and_scale_inv_cuda);
+  using namespace transformer_engine;
+
+  multi_tensor_compute_scale::multi_tensor_compute_scale_and_scale_inv_cuda(
+    chunk_size, reinterpret_cast<Tensor *>(noop_flag), reinterpret_cast<Tensor **>(tensor_lists), num_tensor_lists, num_tensors_per_list,
+    max_fp8, force_pow_2_scales, epsilon
+  );
+}
