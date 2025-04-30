@@ -58,7 +58,7 @@ struct SGDFunctor {
 
     fp16* model_weights_out = nullptr;
     if (N == 4) {
-      model_weights_out = (fp16*)tl.addresses[3][tensor_loc];
+      model_weights_out = reinterpret_cast<fp16*>(tl.addresses[3][tensor_loc]);
       model_weights_out += chunk_idx * chunk_size;
     }
 
