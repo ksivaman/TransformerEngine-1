@@ -127,6 +127,6 @@ void nvte_multi_tensor_scale_cuda(int chunk_size, NVTETensor noop_flag, NVTETens
   using namespace transformer_engine;
 
   multi_tensor_scale::multi_tensor_scale_cuda(
-      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), *reinterpret_cast<Tensor ***>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list),
       num_tensor_lists, num_tensors_per_list, scale, stream);
 }

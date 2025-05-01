@@ -804,7 +804,7 @@ void nvte_multi_tensor_adam_cuda(int chunk_size, NVTETensor noop_flag, NVTETenso
   using namespace transformer_engine;
 
   multi_tensor_adam::multi_tensor_adam_cuda(
-      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), *reinterpret_cast<Tensor ***>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list),
       num_tensor_lists, num_tensors_per_list, lr, beta1, beta2, epsilon, step, mode,
       bias_correction, weight_decay, stream);
 }
@@ -818,7 +818,7 @@ void nvte_multi_tensor_adam_param_remainder_cuda(
   using namespace transformer_engine;
 
   multi_tensor_adam::multi_tensor_adam_param_remainder_cuda(
-      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), *reinterpret_cast<Tensor ***>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list),
       num_tensor_lists, num_tensors_per_list, lr, beta1, beta2, epsilon, step, mode,
       bias_correction, weight_decay, stream);
 }
@@ -834,7 +834,7 @@ void nvte_multi_tensor_adam_fp8_cuda(int chunk_size, NVTETensor noop_flag,
   using namespace transformer_engine;
 
   multi_tensor_adam::multi_tensor_adam_fp8_cuda(
-      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), *reinterpret_cast<Tensor ***>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list),
       num_tensor_lists, num_tensors_per_list, lr, beta1, beta2, epsilon, step, mode,
       bias_correction, weight_decay, static_cast<DType>(fp8_dtype), stream);
 }
@@ -848,7 +848,7 @@ void nvte_multi_tensor_adam_capturable_cuda(
   using namespace transformer_engine;
 
   multi_tensor_adam::multi_tensor_adam_capturable_cuda(
-      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), *reinterpret_cast<Tensor ***>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list),
       num_tensor_lists, num_tensors_per_list, *reinterpret_cast<Tensor *>(lr), beta1, beta2,
       epsilon, *reinterpret_cast<Tensor *>(step), mode, bias_correction, weight_decay,
       *reinterpret_cast<Tensor *>(inv_scale), stream);
@@ -863,7 +863,7 @@ void nvte_multi_tensor_adam_capturable_master_cuda(
   using namespace transformer_engine;
 
   multi_tensor_adam::multi_tensor_adam_capturable_master_cuda(
-      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), *reinterpret_cast<Tensor ***>(tensor_lists),
+      chunk_size, *reinterpret_cast<Tensor *>(noop_flag), convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list),
       num_tensor_lists, num_tensors_per_list, *reinterpret_cast<Tensor *>(lr), beta1, beta2,
       epsilon, *reinterpret_cast<Tensor *>(step), mode, bias_correction, weight_decay,
       *reinterpret_cast<Tensor *>(inv_scale), stream);

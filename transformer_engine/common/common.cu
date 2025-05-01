@@ -193,4 +193,19 @@ bool is_supported_by_CC_100() {
   return deviceComputeCapability >= 100;
 }
 
+Tensor** convert_tensor_array(NVTETensor** nvte_tensors, size_t outer_size, size_t inner_size) {
+  Tensor** new_tensor_array = new Tensor*[outer_size];
+
+  for (size_t i = 0; i < outer_size; ++i) {
+      new_tensor_array[i] = new Tensor[inner_size];
+
+      for (size_t j = 0; j < inner_size; ++j) {
+          //NVTETensor* src = &nvte_tensors[i][j];
+          new_tensor_array[i][j] = *reinterpret_cast<Tensor*>(nvte_tensors[i][j]);
+      }
+  }
+
+  return new_tensor_array;
+}
+
 }  // namespace transformer_engine
