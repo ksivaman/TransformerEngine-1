@@ -45,9 +45,9 @@ __global__ void multi_tensor_apply_kernel(int64_t chunk_size, volatile int *noop
 template <int depth, bool USE_FP8 = false, typename T, typename... ArgTypes>
 void multi_tensor_apply(int64_t block_size, int64_t chunk_size,
                         const transformer_engine::Tensor &noop_flag,
-                        const transformer_engine::Tensor **tensor_lists,
-                        const size_t num_tensor_lists, const size_t num_tensors_per_list,
-                        T callable, cudaStream_t stream, ArgTypes... args) {
+                        transformer_engine::Tensor **tensor_lists, const size_t num_tensor_lists,
+                        const size_t num_tensors_per_list, T callable, cudaStream_t stream,
+                        ArgTypes... args) {
   if constexpr (USE_FP8) {
     NVTE_CHECK(num_tensor_lists == depth + 3,
                "tensor_lists.size() != depth + 3, tensor_lists should have 3 more tensors (scale, "

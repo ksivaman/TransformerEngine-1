@@ -175,9 +175,7 @@ void multi_tensor_sgd_cuda(int chunk_size, Tensor noop_flag, Tensor** tensor_lis
                           num_tensors_per_list, SGDFunctor<4, float, float>(), stream, wd, momentum,
                           dampening, lr, nesterov, first_run, wd_after_momentum, scale);
   } else {
-    NVTE_ERROR(
-        "multi_tensor_sgd only supports some combinations of gradient & weight types. Given: ",
-        "gradient: ", grad_type, ", weight: ", weight_type, ", num_lists: ", num_tensor_lists);
+    NVTE_ERROR("Unsupported combination of weight and gradient types.");
   }
 
   NVTE_CHECK_CUDA(cudaGetLastError());
