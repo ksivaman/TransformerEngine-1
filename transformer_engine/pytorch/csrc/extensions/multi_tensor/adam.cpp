@@ -15,7 +15,7 @@ void multi_tensor_adam_cuda(int chunk_size, at::Tensor noop_flag,
   using namespace transformer_engine::pytorch;
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
 
   nvte_multi_tensor_adam_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr.data(), num_lists,
@@ -32,7 +32,7 @@ void multi_tensor_adam_param_remainder_cuda(int chunk_size, at::Tensor noop_flag
   using namespace transformer_engine::pytorch;
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
 
   nvte_multi_tensor_adam_param_remainder_cuda(
@@ -49,7 +49,7 @@ void multi_tensor_adam_fp8_cuda(int chunk_size, at::Tensor noop_flag,
   using namespace transformer_engine::pytorch;
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
 
   nvte_multi_tensor_adam_fp8_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr.data(),
@@ -68,7 +68,7 @@ void multi_tensor_adam_capturable_cuda(int chunk_size, at::Tensor noop_flag,
   using namespace transformer_engine::pytorch;
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
   auto lr_cu = makeTransformerEngineTensor(lr);
   auto step_cu = makeTransformerEngineTensor(step);
@@ -90,7 +90,7 @@ void multi_tensor_adam_capturable_master_cuda(int chunk_size, at::Tensor noop_fl
   using namespace transformer_engine::pytorch;
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
   auto lr_cu = makeTransformerEngineTensor(lr);
   auto step_cu = makeTransformerEngineTensor(step);

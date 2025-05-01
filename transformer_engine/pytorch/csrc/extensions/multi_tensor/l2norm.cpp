@@ -37,7 +37,7 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_l2norm_cuda(
   }
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
   auto output_cu = makeTransformerEngineTensor(output);
   auto output_per_tensor_cu = makeTransformerEngineTensor(output_per_tensor);
@@ -84,7 +84,7 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_unscale_l2norm_cuda(
   auto ret = at::empty({1}, output.options());
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+  auto [_, __, tensor_lists_ptr, num_lists, num_tensors] =
       makeTransformerEngineTensor(tensor_lists);
   auto output_cu = makeTransformerEngineTensor(output);
   auto output_per_tensor_cu = makeTransformerEngineTensor(output_per_tensor);

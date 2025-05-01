@@ -97,7 +97,8 @@ transformer_engine::TensorWrapper makeTransformerEngineTensor(at::Tensor tensor)
   return makeTransformerEngineTensor(tensor.data_ptr(), shape, dtype);
 }
 
-std::tuple<std::vector<std::vector<NVTETensor>>, std::vector<NVTETensor*>, size_t, size_t>
+std::tuple<std::vector<transformer_engine::TensorWrapper>, std::vector<std::vector<NVTETensor>>,
+           std::vector<NVTETensor*>, size_t, size_t>
 makeTransformerEngineTensor(std::vector<std::vector<at::Tensor>> at_tensor_lists) {
   size_t num_lists = at_tensor_lists.size();
 
@@ -105,10 +106,12 @@ makeTransformerEngineTensor(std::vector<std::vector<at::Tensor>> at_tensor_lists
 
   size_t num_tensors = at_tensor_lists[0].size();
 
-  std::vector<std::vector<NVTETensor>> te_tensor_lists;
-  std::vector<NVTETensor*> te_tensor_list_ptrs;
-  te_tensor_lists.reserve(at_tensor_lists.size());
-  te_tensor_list_ptrs.reserve(at_tensor_lists.size());
+  std::vector<std::vector<NVTETensor>> nvte_tensor_lists;
+  std::vector<NVTETensor*> nvte_tensor_list_ptrs;
+  std::vector<transformer_engine::TensorWrapper> tensorWrappers;
+  nvte_tensor_lists.reserve(num_lists);
+  nvte_tensor_list_ptrs.reserve(num_lists);
+  tensorWrappers.reserve(num_lists * num_tensors);
 
   for (const auto& at_list : at_tensor_lists) {
     NVTE_CHECK(at_list.size() == num_tensors, "Wrong number of tensors");
@@ -116,18 +119,21 @@ makeTransformerEngineTensor(std::vector<std::vector<at::Tensor>> at_tensor_lists
     te_list.reserve(num_tensors);
 
     for (const auto& at_tensor : at_list) {
-      NVTETensor te_tensor = makeTransformerEngineTensor(at_tensor).data();
+      transformer_engine::TensorWrapper tensorWrapper = makeTransformerEngineTensor(at_tensor);
+      NVTETensor te_tensor = tensorWrapper.data();
+      tensorWrappers.push_back(std::move(tensorWrapper));
       te_list.push_back(std::move(te_tensor));
     }
 
-    te_tensor_lists.push_back(std::move(te_list));
+    nvte_tensor_lists.push_back(std::move(te_list));
   }
 
-  for (auto& te_tensor_list : te_tensor_lists) {
-    te_tensor_list_ptrs.push_back(te_tensor_list.data());
+  for (auto& te_tensor_list : nvte_tensor_lists) {
+    nvte_tensor_list_ptrs.push_back(te_tensor_list.data());
   }
 
-  return {te_tensor_lists, te_tensor_list_ptrs, num_lists, num_tensors};
+  return std::make_tuple(std::move(tensorWrappers), std::move(nvte_tensor_lists),
+                         std::move(nvte_tensor_list_ptrs), num_lists, num_tensors);
 }
 
 transformer_engine::TensorWrapper makeTransformerEngineTensor(
