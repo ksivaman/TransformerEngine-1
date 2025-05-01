@@ -97,6 +97,32 @@ transformer_engine::TensorWrapper makeTransformerEngineTensor(at::Tensor tensor)
   return makeTransformerEngineTensor(tensor.data_ptr(), shape, dtype);
 }
 
+std::tuple<void***, size_t, size_t> makeTransformerEngineTensor(
+    std::vector<std::vector<at::Tensor>> at_tensor_lists) {
+  size_t num_lists = at_tensor_lists.size();
+
+  NVTE_CHECK(num_lists > 0, "List of tensors is empty.");
+
+  size_t num_tensors = at_tensor_lists[0].size();
+
+  std::vector<std::vector<transformer_engine::TensorWrapper>> te_tensor_lists;
+  te_tensor_lists.reserve(at_tensor_lists.size());
+
+  for (const auto& at_list : at_tensor_lists) {
+    NVTE_CHECK(at_list.size() == num_tensors, "Wrong number of tensors");
+    std::vector<transformer_engine::TensorWrapper> te_list;
+    te_list.reserve(num_tensors);
+
+    for (const auto& at_tensor : at_list) {
+      transformer_engine::TensorWrapper te_tensor = makeTransformerEngineTensor(at_tensor);
+      te_list.push_back(std::move(te_tensor));
+    }
+
+    te_tensor_lists.push_back(std::move(te_list));
+  }
+  return {reinterpret_cast<void***>(te_tensor_lists.data()), num_lists, num_tensors};
+}
+
 transformer_engine::TensorWrapper makeTransformerEngineTensor(
     void* data_ptr, const std::vector<size_t>& shape, const transformer_engine::DType type,
     void* amax_ptr, void* scale_ptr, void* scale_inv_ptr, std::vector<size_t> scale_inv_shape,
