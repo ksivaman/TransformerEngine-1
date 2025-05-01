@@ -97,7 +97,7 @@ transformer_engine::TensorWrapper makeTransformerEngineTensor(at::Tensor tensor)
   return makeTransformerEngineTensor(tensor.data_ptr(), shape, dtype);
 }
 
-std::tuple<Tensor**, size_t, size_t> makeTransformerEngineTensor(
+std::tuple<void**, size_t, size_t> makeTransformerEngineTensor(
     std::vector<std::vector<at::Tensor>> at_tensor_lists) {
   size_t num_lists = at_tensor_lists.size();
 
@@ -122,7 +122,7 @@ std::tuple<Tensor**, size_t, size_t> makeTransformerEngineTensor(
 
     te_tensor_lists.push_back(std::move(te_list));
   }
-  return {reinterpret_cast<Tensor**>(te_tensor_lists.data()), num_lists, num_tensors};
+  return {reinterpret_cast<void**>(te_tensor_lists.data()), num_lists, num_tensors};
 }
 
 /* Tensor** extract_tensor_ptr_array(std::vector<std::vector<Tensor>>& lists) {
