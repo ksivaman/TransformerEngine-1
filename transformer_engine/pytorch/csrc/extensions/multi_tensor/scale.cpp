@@ -12,8 +12,9 @@ void multi_tensor_scale_cuda(int chunk_size, at::Tensor noop_flag,
   using namespace transformer_engine::pytorch;
 
   auto noop_flag_cu = makeTransformerEngineTensor(noop_flag);
-  auto [tensor_lists_ptr, num_lists, num_tensors] = makeTransformerEngineTensor(tensor_lists);
+  auto [_, tensor_lists_ptr, num_lists, num_tensors] =
+      makeTransformerEngineTensor(tensor_lists);
 
-  nvte_multi_tensor_scale_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists,
+  nvte_multi_tensor_scale_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr.data(), num_lists,
                                num_tensors, scale, at::cuda::getCurrentCUDAStream());
 }
