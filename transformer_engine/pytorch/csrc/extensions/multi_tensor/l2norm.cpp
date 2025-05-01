@@ -19,6 +19,7 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_l2norm_cuda(
 
   at::Tensor output_per_tensor;
   at::Tensor ret_per_tensor;
+  auto ret = at::empty({1}, output.options());
 
   int ntensors = tensor_lists[0].size();
   int max_chunks_per_tensor = -1;
@@ -42,10 +43,10 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_l2norm_cuda(
   auto ret_cu = makeTransformerEngineTensor(ret);
   auto ret_per_tensor_cu = makeTransformerEngineTensor(ret_per_tensor);
 
-  nvte_multi_tensor_unscale_l2norm_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr,
-                                        num_lists, num_tensors, output_cu, output_per_tensor_cu,
-                                        ret_cu, ret_per_tensor_cu, per_tensor,
-                                        max_chunks_per_tensor, at::cuda::getCurrentCUDAStream());
+  nvte_multi_tensor_l2norm_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists,
+                                num_tensors, output_cu.data(), output_per_tensor_cu.data(),
+                                ret_cu.data(), ret_per_tensor_cu.data(), per_tensor,
+                                max_chunks_per_tensor, at::cuda::getCurrentCUDAStream());
 
   return std::tuple<at::Tensor, at::Tensor>(ret, ret_per_tensor);
 }
@@ -89,10 +90,10 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_unscale_l2norm_cuda(
   auto ret_per_tensor_cu = makeTransformerEngineTensor(ret_per_tensor);
   auto inv_scale_cu = makeTransformerEngineTensor(inv_scale);
 
-  nvte_multi_tensor_unscale_l2norm_cuda(chunk_size, noop_flag_cu.data(), tensor_lists_ptr,
-                                        num_lists, num_tensors, output_cu, output_per_tensor_cu,
-                                        ret_cu, ret_per_tensor_cu, inv_scale_cu, per_tensor,
-                                        max_chunks_per_tensor, at::cuda::getCurrentCUDAStream());
+  nvte_multi_tensor_unscale_l2norm_cuda(
+      chunk_size, noop_flag_cu.data(), tensor_lists_ptr, num_lists, num_tensors, output_cu.data(),
+      output_per_tensor_cu.data(), ret_cu.data(), ret_per_tensor_cu.data(), inv_scale_cu.data(),
+      per_tensor, max_chunks_per_tensor, at::cuda::getCurrentCUDAStream());
 
   return std::tuple<at::Tensor, at::Tensor>(ret, ret_per_tensor);
 }

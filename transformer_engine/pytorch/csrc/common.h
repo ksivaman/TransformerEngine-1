@@ -294,7 +294,7 @@ transformer_engine::TensorWrapper makeTransformerEngineTensor(void* data_ptr,
 
 transformer_engine::TensorWrapper makeTransformerEngineTensor(at::Tensor tensor);
 
-std::tuple<void**, size_t, size_t> makeTransformerEngineTensor(
+std::tuple<void***, size_t, size_t> makeTransformerEngineTensor(
     std::vector<std::vector<at::Tensor>> at_tensor_lists);
 
 TensorWrapper makeTransformerEngineTensor(py::handle tensor, py::handle quantizer);

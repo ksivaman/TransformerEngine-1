@@ -97,7 +97,7 @@ transformer_engine::TensorWrapper makeTransformerEngineTensor(at::Tensor tensor)
   return makeTransformerEngineTensor(tensor.data_ptr(), shape, dtype);
 }
 
-std::tuple<void**, size_t, size_t> makeTransformerEngineTensor(
+std::tuple<void***, size_t, size_t> makeTransformerEngineTensor(
     std::vector<std::vector<at::Tensor>> at_tensor_lists) {
   size_t num_lists = at_tensor_lists.size();
 
@@ -105,14 +105,12 @@ std::tuple<void**, size_t, size_t> makeTransformerEngineTensor(
 
   size_t num_tensors = at_tensor_lists[0].size();
 
-  std::vector<std::vector<Tensor>> te_tensor_lists;
+  std::vector<std::vector<transformer_engine::TensorWrapper>> te_tensor_lists;
   te_tensor_lists.reserve(at_tensor_lists.size());
 
   for (const auto& at_list : at_tensor_lists) {
-    NVTE_CHECK(at_list.size() == num_tensors, "Wrong number of tensors, expected " +
-                                                  std::string(num_tensors) + " but found " +
-                                                  std::string(at_list.size()));
-    std::vector<Tensor> te_list;
+    NVTE_CHECK(at_list.size() == num_tensors, "Wrong number of tensors");
+    std::vector<transformer_engine::TensorWrapper> te_list;
     te_list.reserve(num_tensors);
 
     for (const auto& at_tensor : at_list) {
@@ -122,12 +120,8 @@ std::tuple<void**, size_t, size_t> makeTransformerEngineTensor(
 
     te_tensor_lists.push_back(std::move(te_list));
   }
-  return {reinterpret_cast<void**>(te_tensor_lists.data()), num_lists, num_tensors};
+  return {reinterpret_cast<void***>(te_tensor_lists.data()), num_lists, num_tensors};
 }
-
-/* Tensor** extract_tensor_ptr_array(std::vector<std::vector<Tensor>>& lists) {
-  return lists.empty() ? nullptr : reinterpret_cast<Tensor**>(lists.data());
-} */
 
 transformer_engine::TensorWrapper makeTransformerEngineTensor(
     void* data_ptr, const std::vector<size_t>& shape, const transformer_engine::DType type,
