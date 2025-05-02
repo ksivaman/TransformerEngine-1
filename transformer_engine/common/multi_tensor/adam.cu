@@ -577,7 +577,7 @@ void multi_tensor_adam_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_li
                             const float lr, const float beta1, const float beta2,
                             const float epsilon, const int step, const int mode,
                             const int bias_correction, const float weight_decay,
-                            cudaStream_t stream) {
+                            const int device_id, cudaStream_t stream) {
   // Handle bias correction mode
   float bias_correction1 = 1.0f, bias_correction2 = 1.0f;
   if (bias_correction == 1) {
@@ -618,9 +618,9 @@ void multi_tensor_adam_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_li
               g_in_type_te, g_in_type,
               multi_tensor_apply<4>((int64_t)BLOCK_SIZE, (int64_t)chunk_size, noop_flag,
                                     tensor_lists, num_tensor_lists, num_tensors_per_list,
-                                    AdamFunctor<p_in_type, g_in_type, float, int64_t>(), stream,
-                                    beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
-                                    (adamMode_t)mode, weight_decay);));
+                                    AdamFunctor<p_in_type, g_in_type, float, int64_t>(), device_id,
+                                    stream, beta1, beta2, bias_correction1, bias_correction2,
+                                    epsilon, lr, (adamMode_t)mode, weight_decay);));
     } else {
       // g, p, m, v, p_master
       TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
@@ -630,8 +630,9 @@ void multi_tensor_adam_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_li
               multi_tensor_apply<5>((int64_t)BLOCK_SIZE, (int64_t)chunk_size, noop_flag,
                                     tensor_lists, num_tensor_lists, num_tensors_per_list,
                                     AdamFunctorMaster<p_in_type, g_in_type, float, int64_t>(),
-                                    stream, beta1, beta2, bias_correction1, bias_correction2,
-                                    epsilon, lr, (adamMode_t)mode, weight_decay);));
+                                    device_id, stream, beta1, beta2, bias_correction1,
+                                    bias_correction2, epsilon, lr, (adamMode_t)mode,
+                                    weight_decay);));
     }
   } else {
     if (num_tensor_lists == 4) {
@@ -642,19 +643,19 @@ void multi_tensor_adam_cuda(int chunk_size, Tensor noop_flag, Tensor **tensor_li
               g_in_type_te, g_in_type,
               multi_tensor_apply<4>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists,
                                     num_tensor_lists, num_tensors_per_list,
-                                    AdamFunctor<p_in_type, g_in_type, float, int32_t>(), stream,
-                                    beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
-                                    (adamMode_t)mode, weight_decay);));
+                                    AdamFunctor<p_in_type, g_in_type, float, int32_t>(), device_id,
+                                    stream, beta1, beta2, bias_correction1, bias_correction2,
+                                    epsilon, lr, (adamMode_t)mode, weight_decay);));
     } else {
       TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
           p_in_type_te, p_in_type,
           TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
               g_in_type_te, g_in_type,
-              multi_tensor_apply<5>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists,
-                                    num_tensor_lists, num_tensors_per_list,
-                                    AdamFunctorMaster<p_in_type, g_in_type, float, int32_t>(),
-                                    stream, beta1, beta2, bias_correction1, bias_correction2,
-                                    epsilon, lr, (adamMode_t)mode, weight_decay);));
+              multi_tensor_apply<5>(
+                  BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
+                  num_tensors_per_list, AdamFunctorMaster<p_in_type, g_in_type, float, int32_t>(),
+                  device_id, stream, beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
+                  (adamMode_t)mode, weight_decay);));
     }
   }
   NVTE_CHECK_CUDA(cudaGetLastError());
@@ -666,7 +667,7 @@ void multi_tensor_adam_param_remainder_cuda(int chunk_size, Tensor noop_flag, Te
                                             const float beta1, const float beta2,
                                             const float epsilon, const int step, const int mode,
                                             const int bias_correction, const float weight_decay,
-                                            cudaStream_t stream) {
+                                            const int device_id, cudaStream_t stream) {
   // Handle bias correction mode
   float bias_correction1 = 1.0f, bias_correction2 = 1.0f;
   if (bias_correction == 1) {
@@ -688,8 +689,8 @@ void multi_tensor_adam_param_remainder_cuda(int chunk_size, Tensor noop_flag, Te
       g_in_type_te, g_in_type,
       multi_tensor_apply<5>((int64_t)BLOCK_SIZE, (int64_t)chunk_size, noop_flag, tensor_lists,
                             num_tensor_lists, num_tensors_per_list,
-                            AdamFunctorMasterParamRemainder<g_in_type, float, int64_t>(), stream,
-                            beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
+                            AdamFunctorMasterParamRemainder<g_in_type, float, int64_t>(), device_id,
+                            stream, beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
                             (adamMode_t)mode, weight_decay););
 
   NVTE_CHECK_CUDA(cudaGetLastError());
@@ -700,7 +701,7 @@ void multi_tensor_adam_fp8_cuda(int chunk_size, Tensor noop_flag, Tensor **tenso
                                 const float lr, const float beta1, const float beta2,
                                 const float epsilon, const int step, const int mode,
                                 const int bias_correction, const float weight_decay,
-                                const DType fp8_dtype, cudaStream_t stream) {
+                                const DType fp8_dtype, const int device_id, cudaStream_t stream) {
   // Handle bias correction mode
   float bias_correction1 = 1.0f, bias_correction2 = 1.0f;
   if (bias_correction == 1) {
@@ -735,21 +736,21 @@ void multi_tensor_adam_fp8_cuda(int chunk_size, Tensor noop_flag, Tensor **tenso
         fp8_dtype, FP8_T,
         TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
             g_in_type_te, g_in_type,
-            multi_tensor_apply<5, true>((int64_t)BLOCK_SIZE, (int64_t)chunk_size, noop_flag,
-                                        tensor_lists, num_tensor_lists, num_tensors_per_list,
-                                        AdamFunctorMaster<FP8_T, g_in_type, float, int64_t>(),
-                                        stream, beta1, beta2, bias_correction1, bias_correction2,
-                                        epsilon, lr, (adamMode_t)mode, weight_decay);));
+            multi_tensor_apply<5, true>(
+                (int64_t)BLOCK_SIZE, (int64_t)chunk_size, noop_flag, tensor_lists, num_tensor_lists,
+                num_tensors_per_list, AdamFunctorMaster<FP8_T, g_in_type, float, int64_t>(),
+                device_id, stream, beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
+                (adamMode_t)mode, weight_decay);));
   } else {
     TRANSFORMER_ENGINE_TYPE_SWITCH_FP8ONLY(
         fp8_dtype, FP8_T,
         TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
             g_in_type_te, g_in_type,
-            multi_tensor_apply<5, true>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists,
-                                        num_tensor_lists, num_tensors_per_list,
-                                        AdamFunctorMaster<FP8_T, g_in_type, float, int32_t>(),
-                                        stream, beta1, beta2, bias_correction1, bias_correction2,
-                                        epsilon, lr, (adamMode_t)mode, weight_decay);));
+            multi_tensor_apply<5, true>(
+                BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
+                num_tensors_per_list, AdamFunctorMaster<FP8_T, g_in_type, float, int32_t>(),
+                device_id, stream, beta1, beta2, bias_correction1, bias_correction2, epsilon, lr,
+                (adamMode_t)mode, weight_decay);));
   }
   NVTE_CHECK_CUDA(cudaGetLastError());
 }
@@ -760,32 +761,31 @@ void multi_tensor_adam_capturable_cuda(int chunk_size, Tensor noop_flag, Tensor 
                                        const float beta1, const float beta2, const float epsilon,
                                        Tensor step, const int mode, const int bias_correction,
                                        const float weight_decay, Tensor inv_scale,
-                                       cudaStream_t stream) {
+                                       const int device_id, cudaStream_t stream) {
   TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
       tensor_lists[0][0].dtype(), dtype,
       multi_tensor_apply<4>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
-                            num_tensors_per_list, AdamCapturableFunctor<dtype, float>(), stream,
-                            beta1, beta2, reinterpret_cast<int *>(step.data.dptr), bias_correction,
-                            epsilon, reinterpret_cast<float *>(lr.data.dptr), (adamMode_t)mode,
-                            weight_decay, reinterpret_cast<float *>(inv_scale.data.dptr));)
+                            num_tensors_per_list, AdamCapturableFunctor<dtype, float>(), device_id,
+                            stream, beta1, beta2, reinterpret_cast<int *>(step.data.dptr),
+                            bias_correction, epsilon, reinterpret_cast<float *>(lr.data.dptr),
+                            (adamMode_t)mode, weight_decay,
+                            reinterpret_cast<float *>(inv_scale.data.dptr));)
 
   NVTE_CHECK_CUDA(cudaGetLastError());
 }
 
-void multi_tensor_adam_capturable_master_cuda(int chunk_size, Tensor noop_flag,
-                                              Tensor **tensor_lists, const size_t num_tensor_lists,
-                                              const size_t num_tensors_per_list, Tensor lr,
-                                              const float beta1, const float beta2,
-                                              const float epsilon, Tensor step, const int mode,
-                                              const int bias_correction, const float weight_decay,
-                                              Tensor inv_scale, cudaStream_t stream) {
+void multi_tensor_adam_capturable_master_cuda(
+    int chunk_size, Tensor noop_flag, Tensor **tensor_lists, const size_t num_tensor_lists,
+    const size_t num_tensors_per_list, Tensor lr, const float beta1, const float beta2,
+    const float epsilon, Tensor step, const int mode, const int bias_correction,
+    const float weight_decay, Tensor inv_scale, const int device_id, cudaStream_t stream) {
   TRANSFORMER_ENGINE_TYPE_SWITCH_NON_FP8ONLY(
       tensor_lists[0][0].dtype(), dtype,
       multi_tensor_apply<5>(BLOCK_SIZE, chunk_size, noop_flag, tensor_lists, num_tensor_lists,
                             num_tensors_per_list, AdamCapturableMasterFunctor<dtype, float>(),
-                            stream, beta1, beta2, reinterpret_cast<int *>(step.data.dptr),
-                            bias_correction, epsilon, reinterpret_cast<float *>(lr.data.dptr),
-                            (adamMode_t)mode, weight_decay,
+                            device_id, stream, beta1, beta2,
+                            reinterpret_cast<int *>(step.data.dptr), bias_correction, epsilon,
+                            reinterpret_cast<float *>(lr.data.dptr), (adamMode_t)mode, weight_decay,
                             reinterpret_cast<float *>(inv_scale.data.dptr));)
 
   NVTE_CHECK_CUDA(cudaGetLastError());
@@ -799,7 +799,7 @@ void nvte_multi_tensor_adam_cuda(int chunk_size, NVTETensor noop_flag, NVTETenso
                                  const float lr, const float beta1, const float beta2,
                                  const float epsilon, const int step, const int mode,
                                  const int bias_correction, const float weight_decay,
-                                 cudaStream_t stream) {
+                                 const int device_id, cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_adam_cuda);
   using namespace transformer_engine;
 
@@ -807,14 +807,14 @@ void nvte_multi_tensor_adam_cuda(int chunk_size, NVTETensor noop_flag, NVTETenso
       chunk_size, *reinterpret_cast<Tensor *>(noop_flag),
       convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list), num_tensor_lists,
       num_tensors_per_list, lr, beta1, beta2, epsilon, step, mode, bias_correction, weight_decay,
-      stream);
+      device_id, stream);
 }
 
 void nvte_multi_tensor_adam_param_remainder_cuda(
     int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
     const size_t num_tensors_per_list, const float lr, const float beta1, const float beta2,
     const float epsilon, const int step, const int mode, const int bias_correction,
-    const float weight_decay, cudaStream_t stream) {
+    const float weight_decay, const int device_id, cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_adam_param_remainder_cuda);
   using namespace transformer_engine;
 
@@ -822,7 +822,7 @@ void nvte_multi_tensor_adam_param_remainder_cuda(
       chunk_size, *reinterpret_cast<Tensor *>(noop_flag),
       convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list), num_tensor_lists,
       num_tensors_per_list, lr, beta1, beta2, epsilon, step, mode, bias_correction, weight_decay,
-      stream);
+      device_id, stream);
 }
 
 void nvte_multi_tensor_adam_fp8_cuda(int chunk_size, NVTETensor noop_flag,
@@ -831,7 +831,7 @@ void nvte_multi_tensor_adam_fp8_cuda(int chunk_size, NVTETensor noop_flag,
                                      const float beta1, const float beta2, const float epsilon,
                                      const int step, const int mode, const int bias_correction,
                                      const float weight_decay, const NVTEDType fp8_dtype,
-                                     cudaStream_t stream) {
+                                     const int device_id, cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_adam_fp8_cuda);
   using namespace transformer_engine;
 
@@ -839,14 +839,14 @@ void nvte_multi_tensor_adam_fp8_cuda(int chunk_size, NVTETensor noop_flag,
       chunk_size, *reinterpret_cast<Tensor *>(noop_flag),
       convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list), num_tensor_lists,
       num_tensors_per_list, lr, beta1, beta2, epsilon, step, mode, bias_correction, weight_decay,
-      static_cast<DType>(fp8_dtype), stream);
+      static_cast<DType>(fp8_dtype), device_id, stream);
 }
 
 void nvte_multi_tensor_adam_capturable_cuda(
     int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
     const size_t num_tensors_per_list, NVTETensor lr, const float beta1, const float beta2,
     const float epsilon, NVTETensor step, const int mode, const int bias_correction,
-    const float weight_decay, NVTETensor inv_scale, cudaStream_t stream) {
+    const float weight_decay, NVTETensor inv_scale, const int device_id, cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_adam_capturable_cuda);
   using namespace transformer_engine;
 
@@ -855,14 +855,14 @@ void nvte_multi_tensor_adam_capturable_cuda(
       convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list), num_tensor_lists,
       num_tensors_per_list, *reinterpret_cast<Tensor *>(lr), beta1, beta2, epsilon,
       *reinterpret_cast<Tensor *>(step), mode, bias_correction, weight_decay,
-      *reinterpret_cast<Tensor *>(inv_scale), stream);
+      *reinterpret_cast<Tensor *>(inv_scale), device_id, stream);
 }
 
 void nvte_multi_tensor_adam_capturable_master_cuda(
     int chunk_size, NVTETensor noop_flag, NVTETensor **tensor_lists, const size_t num_tensor_lists,
     const size_t num_tensors_per_list, NVTETensor lr, const float beta1, const float beta2,
     const float epsilon, NVTETensor step, const int mode, const int bias_correction,
-    const float weight_decay, NVTETensor inv_scale, cudaStream_t stream) {
+    const float weight_decay, NVTETensor inv_scale, const int device_id, cudaStream_t stream) {
   NVTE_API_CALL(nvte_multi_tensor_adam_capturable_master_cuda);
   using namespace transformer_engine;
 
@@ -871,5 +871,5 @@ void nvte_multi_tensor_adam_capturable_master_cuda(
       convert_tensor_array(tensor_lists, num_tensor_lists, num_tensors_per_list), num_tensor_lists,
       num_tensors_per_list, *reinterpret_cast<Tensor *>(lr), beta1, beta2, epsilon,
       *reinterpret_cast<Tensor *>(step), mode, bias_correction, weight_decay,
-      *reinterpret_cast<Tensor *>(inv_scale), stream);
+      *reinterpret_cast<Tensor *>(inv_scale), device_id, stream);
 }
