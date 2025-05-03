@@ -12,6 +12,7 @@ from .utils import (
     all_files_in_dir,
     cuda_archs,
     cuda_version,
+    debug_build_enabled,
 )
 
 
@@ -54,6 +55,10 @@ def setup_pytorch_extension(
         "--expt-extended-lambda",
         "--use_fast_math",
     ]
+
+    if debug_build_enabled():
+        cxx_flags.append("-g")
+        nvcc_flags.extend(["-g", "-G"])
 
     cuda_architectures = cuda_archs()
 
