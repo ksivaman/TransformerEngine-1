@@ -26,6 +26,7 @@
 #include "./nvtx.h"
 #include "./util/cuda_driver.h"
 #include "./util/logging.h"
+#include "./util/pybind_helper.h"
 
 namespace transformer_engine {
 
@@ -602,8 +603,9 @@ bool is_fp8_dtype(const DType t);
  */
 void update_tensor_scale_inv(Tensor *t, cudaStream_t stream);
 
-#define NVTE_API_CALL(api_name) \
-  transformer_engine::nvtx::NVTXWrapper _##api_name##_nvtx_wrapper(#api_name);
+#define NVTE_API_CALL(api_name)                                                \
+  transformer_engine::nvtx::NVTXWrapper _##api_name##_nvtx_wrapper(#api_name); \
+  MaybeReleaseGIL _nvte_gil_guard;
 
 void checkCuDriverContext(CUstream stream);
 

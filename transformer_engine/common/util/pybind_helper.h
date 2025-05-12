@@ -7,12 +7,25 @@
 #ifndef TRANSFORMER_ENGINE_COMMON_UTIL_PYBIND_HELPER_H_
 #define TRANSFORMER_ENGINE_COMMON_UTIL_PYBIND_HELPER_H_
 
+#include <Python.h>
 #include <pybind11/pybind11.h>
 #include <transformer_engine/comm_gemm_overlap.h>
 #include <transformer_engine/fused_attn.h>
 #include <transformer_engine/transformer_engine.h>
 
 #include "cuda_runtime.h"
+
+class MaybeReleaseGIL {
+ public:
+  MaybeReleaseGIL() {
+    if (PyGILState_Check()) {
+      guard = std::make_unique<pybind11::gil_scoped_release>();
+    }
+  }
+
+ private:
+  std::unique_ptr<pybind11::gil_scoped_release> guard;
+};
 
 #define NVTE_DECLARE_COMMON_PYBIND11_HANDLES(m)                                                    \
   pybind11::enum_<transformer_engine::DType>(m, "DType", pybind11::module_local())                 \
