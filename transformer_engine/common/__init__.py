@@ -56,10 +56,9 @@ def _find_shared_object_in_te_dir(te_path: Path, prefix: str):
 
     files = []
     search_paths = (
-        te_path,
-        te_path / "transformer_engine",
-        te_path / "transformer_engine/wheel_lib",
-        te_path / "wheel_lib",
+        te_path,  # Inplace source build.
+        te_path / "transformer_engine",  # Regular source build.
+        te_path / "transformer_engine/wheel_lib",  # PyPI installation.
     )
 
     # Search.
@@ -103,7 +102,7 @@ def _get_shared_object_file(library: str) -> Path:
     so_path_in_install_dir = _find_shared_object_in_te_dir(te_install_dir, so_prefix)
 
     # Check default python package install location in system.
-    site_packages_dir = Path(sysconfig.get_paths()["purelib"])
+    site_packages_dir = Path(sysconfig.get_path("purelib"))
     so_path_in_default_dir = _find_shared_object_in_te_dir(site_packages_dir, so_prefix)
 
     # Case 1: Typical user workflow: Both locations are the same, return any result.
@@ -211,19 +210,22 @@ def _get_sys_extension():
 
 
 @functools.lru_cache(maxsize=None)
-def _load_nvidia_cuda_library(lib_name: str):
+def _load_cuda_library_from_pip(lib_name: str):
     """
     Attempts to load shared object file installed via pip.
 
     `lib_name`: Name of package as found in the `nvidia` dir in python environment.
     """
 
-    so_paths = glob.glob(
-        os.path.join(
-            sysconfig.get_path("purelib"),
-            f"nvidia/{lib_name}/lib/lib*.{_get_sys_extension()}.*[0-9]",
-        )
-    )
+    ext = _get_sys_extension()
+    nvidia_dir = os.path.join(sysconfig.get_path("purelib"), "nvidia")
+
+    # PyPI packages provided by nvidia libs exist
+    # in 2 possible direcories inside `nvidia`.
+    if os.path.isdir(os.path.join(nvidia_dir, lib_name)):
+        so_paths = glob.glob(os.path.join(nvidia_dir, lib_name, f"lib/lib*.{ext}.*[0-9]"))
+    else:
+        so_paths = glob.glob(os.path.join(nvidia_dir, f"cuda_{lib_name}", f"lib/lib*.{ext}.*[0-9]"))
 
     path_found = len(so_paths) > 0
     ctypes_handles = []
@@ -233,6 +235,33 @@ def _load_nvidia_cuda_library(lib_name: str):
             ctypes_handles.append(ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL))
 
     return path_found, ctypes_handles
+
+
+@functools.lru_cache(maxsize=None)
+def _load_cuda_library_from_system(lib_name: str):
+    """
+    Attempts to load shared object file installed via pip.
+
+    `lib_name`: Name of library to load without extension or `lib` prefix.
+    """
+
+    # Search in locations set via potential envvars; default to '/usr/local/cuda'.
+    custom_lib_home = os.environ.get(f"{lib_name.upper()}_HOME") or os.environ.get(
+        f"{lib_name.upper()}_PATH"
+    )
+    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH") or "/usr/local/cuda"
+    lib_home = custom_lib_home or cuda_home
+    libs = glob.glob(f"{lib_home}/**/lib{lib_name}.{_get_sys_extension()}*", recursive=True)
+    libs.sort(reverse=True, key=os.path.basename)
+    if libs:
+        return True, ctypes.CDLL(libs[0], mode=ctypes.RTLD_GLOBAL)
+
+    # Search in LD_LIBRARY_PATH.
+    try:
+        _lib_handle = ctypes.CDLL(f"lib{lib_name}.{_get_sys_extension()}", mode=ctypes.RTLD_GLOBAL)
+        return True, _lib_handle
+    except OSError:
+        return False, None
 
 
 @functools.lru_cache(maxsize=None)
@@ -249,63 +278,20 @@ def _nvidia_cudart_include_dir():
 
 
 @functools.lru_cache(maxsize=None)
-def _load_cudnn():
-    """Load CUDNN shared library."""
+def _load_cuda_library(lib_name: str):
+    """Load given shared library."""
 
-    # Attempt to locate cuDNN in CUDNN_HOME or CUDNN_PATH, if either is set
-    cudnn_home = os.environ.get("CUDNN_HOME") or os.environ.get("CUDNN_PATH")
-    if cudnn_home:
-        libs = glob.glob(f"{cudnn_home}/**/libcudnn.{_get_sys_extension()}*", recursive=True)
-        libs.sort(reverse=True, key=os.path.basename)
-        if libs:
-            return ctypes.CDLL(libs[0], mode=ctypes.RTLD_GLOBAL)
-
-    # Attempt to locate cuDNN in CUDA_HOME, CUDA_PATH or /usr/local/cuda
-    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH") or "/usr/local/cuda"
-    libs = glob.glob(f"{cuda_home}/**/libcudnn.{_get_sys_extension()}*", recursive=True)
-    libs.sort(reverse=True, key=os.path.basename)
-    if libs:
-        return ctypes.CDLL(libs[0], mode=ctypes.RTLD_GLOBAL)
-
-    # Attempt to locate cuDNN in Python dist-packages
-    found, handle = _load_nvidia_cuda_library("cudnn")
+    # Attempt to locate library in system.
+    found, handle = _load_cuda_library_from_system(lib_name)
     if found:
         return handle
 
-    # If all else fails, assume that it is in LD_LIBRARY_PATH and error out otherwise
-    return ctypes.CDLL(f"libcudnn.{_get_sys_extension()}", mode=ctypes.RTLD_GLOBAL)
-
-
-@functools.lru_cache(maxsize=None)
-def _load_nvrtc():
-    """Load NVRTC shared library."""
-    # Attempt to locate NVRTC in CUDA_HOME, CUDA_PATH or /usr/local/cuda
-    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH") or "/usr/local/cuda"
-    libs = glob.glob(f"{cuda_home}/**/libnvrtc.{_get_sys_extension()}*", recursive=True)
-    libs = list(filter(lambda x: not ("stub" in x or "libnvrtc-builtins" in x), libs))
-    libs.sort(reverse=True, key=os.path.basename)
-    if libs:
-        return ctypes.CDLL(libs[0], mode=ctypes.RTLD_GLOBAL)
-
-    # Attempt to locate NVRTC in Python dist-packages
-    found, handle = _load_nvidia_cuda_library("cuda_nvrtc")
+    # Attempt to locate library in Python dist-packages.
+    found, handle = _load_cuda_library_from_pip(lib_name)
     if found:
         return handle
 
-    # Attempt to locate NVRTC via ldconfig
-    libs = subprocess.check_output("ldconfig -p | grep 'libnvrtc'", shell=True)
-    libs = libs.decode("utf-8").split("\n")
-    sos = []
-    for lib in libs:
-        if "stub" in lib or "libnvrtc-builtins" in lib:
-            continue
-        if "libnvrtc" in lib and "=>" in lib:
-            sos.append(lib.split(">")[1].strip())
-    if sos:
-        return ctypes.CDLL(sos[0], mode=ctypes.RTLD_GLOBAL)
-
-    # If all else fails, assume that it is in LD_LIBRARY_PATH and error out otherwise
-    return ctypes.CDLL(f"libnvrtc.{_get_sys_extension()}", mode=ctypes.RTLD_GLOBAL)
+    raise RuntimeError(f"{lib_name} shared object not found.")
 
 
 @functools.lru_cache(maxsize=None)
@@ -315,10 +301,10 @@ def _load_core_library():
 
 
 if "NVTE_PROJECT_BUILDING" not in os.environ or bool(int(os.getenv("NVTE_RELEASE_BUILD", "0"))):
-    _CUDNN_LIB_CTYPES = _load_cudnn()
-    _NVRTC_LIB_CTYPES = _load_nvrtc()
-    _CUBLAS_LIB_CTYPES = _load_nvidia_cuda_library("cublas")
-    _CUDART_LIB_CTYPES = _load_nvidia_cuda_library("cuda_runtime")
+    _CUDNN_LIB_CTYPES = _load_cuda_library("cudnn")
+    _NVRTC_LIB_CTYPES = _load_cuda_library("nvrtc")
+    _CUBLAS_LIB_CTYPES = _load_cuda_library_from_pip("cublas")
+    _CUDART_LIB_CTYPES = _load_cuda_library_from_pip("cuda_runtime")
     _TE_LIB_CTYPES = _load_core_library()
 
     # Needed to find the correct headers for NVRTC kernels.
