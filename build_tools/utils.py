@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from importlib.metadata import version
+import importlib.metadata
 from subprocess import CalledProcessError
 from typing import List, Optional, Tuple, Union
 
