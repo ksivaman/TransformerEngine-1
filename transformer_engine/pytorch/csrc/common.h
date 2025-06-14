@@ -214,6 +214,21 @@ class MXFP8Quantizer : public Quantizer {
       std::optional<at::Tensor> rowwise_data = std::nullopt) const override;
 };
 
+class HybridNVFP4Quantizer : public Quantizer {
+ public:
+  DType dtype;
+
+  explicit HybridNVFP4Quantizer(const py::handle& quantizer);
+
+  NVTEScalingMode get_scaling_mode() const override { return NVTE_FWD_NVFP4_BWD_MXFP8_SCALING; }
+
+  void set_quantization_params(TensorWrapper* tensor) const override;
+
+  std::pair<TensorWrapper, py::object> create_tensor(
+      const std::vector<size_t>& shape, DType dtype,
+      std::optional<at::Tensor> rowwise_data = std::nullopt) const override;
+};
+
 std::unique_ptr<Quantizer> convert_quantizer(py::handle quantizer);
 
 std::vector<size_t> getTensorShape(at::Tensor t);
