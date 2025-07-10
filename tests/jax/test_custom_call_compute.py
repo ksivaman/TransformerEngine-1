@@ -109,8 +109,8 @@ def assert_dequantized_scaled_tensor(a: ScaledTensor, b: jnp.ndarray):
         else:
             assert_allclose(a.dequantize(), b, dtype=a.data.dtype)
     elif isinstance(a, ScaledTensor2x):
-        assert_dequantized_scaled_tensor(a.get_rowwise_tensor(), b)
-        assert_dequantized_scaled_tensor(a.get_colwise_tensor(), b)
+        assert_dequantized_scaled_tensor(a.rowwise_tensor, b)
+        assert_dequantized_scaled_tensor(a.colwise_tensor, b)
     else:
         pytest.fail("a must be a ScaledTensor object")
 
@@ -139,10 +139,10 @@ def assert_dequantized_grouped_scaled_tensor(
             dq_a_i = dq_a_i.reshape(b_i.shape)
             assert_allclose(dq_a_i, b_i, dtype=a.data.dtype)
     elif isinstance(a, ScaledTensor2x):
-        assert isinstance(a.get_rowwise_tensor(), GroupedScaledTensor1x)
-        assert isinstance(a.get_colwise_tensor(), GroupedScaledTensor1x)
-        assert_dequantized_grouped_scaled_tensor(a.get_rowwise_tensor(), b)
-        assert_dequantized_grouped_scaled_tensor(a.get_colwise_tensor(), b)
+        assert isinstance(a.rowwise_tensor, GroupedScaledTensor1x)
+        assert isinstance(a.colwise_tensor, GroupedScaledTensor1x)
+        assert_dequantized_grouped_scaled_tensor(a.rowwise_tensor, b)
+        assert_dequantized_grouped_scaled_tensor(a.colwise_tensor, b)
     else:
         pytest.fail("a must be a GroupedScaledTensor object")
 
@@ -1343,9 +1343,10 @@ class TestGroupedDense:
     def _ref_sum_grouped_dense(self, x, kernel, bias, group_sizes, contracting_dims):
         out_list = self._ref_grouped_dense(x, kernel, bias, group_sizes, contracting_dims)
         # Note: we use jnp.sum instead of jnp.mean to make the gradient larger
-        # and prevent them from being clamp to zero
+        # and prevent them from being clamp to zero in FP8. / sqrt(x.size) is used to
+        # normalize the output and prevent the gradient from being too large for FP8.
         out_sum_list = [jnp.sum(out) for out in out_list]
-        return jnp.sum(jnp.asarray(out_sum_list))
+        return jnp.sum(jnp.asarray(out_sum_list)) / jnp.sqrt(x.size)
 
     def _primitive_sum_grouped_dense(
         self, x, kernel, bias, group_sizes, contracting_dims, quantizer_set=noop_quantizer_set
@@ -1353,7 +1354,7 @@ class TestGroupedDense:
         out = grouped_dense(
             x, kernel, group_sizes, contracting_dims, bias=bias, quantizer_set=quantizer_set
         )
-        return jnp.sum(jnp.asarray(out))
+        return jnp.sum(jnp.asarray(out)) / jnp.sqrt(x.size)
 
     @pytest_parametrize_wrapper("dtype", [jnp.bfloat16, jnp.float16])
     def test_grouped_dense_grad_fp16(self, dtype, input_shape):

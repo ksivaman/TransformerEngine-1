@@ -197,6 +197,8 @@ class Float8BlockQuantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> create_tensor(
       const std::vector<size_t>& shape, DType dtype,
       std::optional<at::Tensor> rowwise_data = std::nullopt) const override;
+
+  std::vector<size_t> get_scale_shape(const std::vector<size_t>& shape, bool columnwise) const;
 };
 
 class MXFP8Quantizer : public Quantizer {
@@ -212,6 +214,8 @@ class MXFP8Quantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> create_tensor(
       const std::vector<size_t>& shape, DType dtype,
       std::optional<at::Tensor> rowwise_data = std::nullopt) const override;
+
+  std::vector<size_t> get_scale_shape(const std::vector<size_t>& shape, bool columnwise) const;
 };
 
 class HybridNVFP4Quantizer : public Quantizer {
