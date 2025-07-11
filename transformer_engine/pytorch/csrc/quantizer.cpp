@@ -560,7 +560,7 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
 
   TensorWrapper tensor(NVTE_FWD_NVFP4_BWD_MXFP8_SCALING);
   at::TensorOptions bit4_opts, bit8_opts;
-  at::Tensor data, columnwise_data, rowwise_scale_inv, columnwise_scale_inv;
+  at::Tensor data, scale_inv, columnwise_data, rowwise_scale_inv, columnwise_scale_inv;
   bit4_opts = bit4_opts.dtype(torch::kUInt4).device(torch::kCUDA);
   bit8_opts = bit8_opts.dtype(torch::kUInt8).device(torch::kCUDA);
   auto last_dim = static_cast<size_t>(torch_shape.back());
@@ -597,6 +597,7 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
         columnwise_scale_inv.data_ptr(), DType::kFloat8E8M0,
         std::vector<size_t>{static_cast<size_t>(sinv0), static_cast<size_t>(sinv1)});
   }
+  scale_inv = at::zeros({1}, bit8_opts);
   this->set_quantization_params(&tensor);
 
   py::object ret;
@@ -606,6 +607,7 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
     ret = HybridNVFP4TensorClass("rowwise_data"_a = data, "columnwise_data"_a = columnwise_data,
                                  "rowwise_scale_inv"_a = rowwise_scale_inv,
                                  "columnwise_scale_inv"_a = columnwise_scale_inv,
+                                 "per_tensor_rowwise_scale_inv"_a = scale_inv,
                                  "fp8_dtype"_a = this->dtype, "quantizer"_a = this->quantizer);
   } else {
     py::handle HybridNVFP4TensorClass(reinterpret_cast<PyObject*>(HybridNVFP4TensorPythonClass));
@@ -613,6 +615,7 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
                                  "rowwise_data"_a = data, "columnwise_data"_a = columnwise_data,
                                  "rowwise_scale_inv"_a = rowwise_scale_inv,
                                  "columnwise_scale_inv"_a = columnwise_scale_inv,
+                                 "per_tensor_rowwise_scale_inv"_a = scale_inv,
                                  "fp8_dtype"_a = this->dtype, "quantizer"_a = this->quantizer);
   }
 
