@@ -109,7 +109,7 @@ class HybridNVFP4Quantizer(Quantizer):
         )
 
         # Allocate per tensor scale inverse. FP32 format.
-        per_tensor_scale_inv = torch.zeros(1, dtype=torch.float32, device=device)
+        per_tensor_scale_inv = torch.ones(1, dtype=torch.float32, device=device)
 
         # Allocate FP8 data transpose if needed
         columnwise_data = None

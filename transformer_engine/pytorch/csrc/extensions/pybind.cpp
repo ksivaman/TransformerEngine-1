@@ -90,7 +90,7 @@ void init_float8blockwise_extension() {
 }
 
 void init_hybrid_nvfp4_extensions() {
-  if (MXFP8TensorPythonClass) return;
+  if (HybridNVFP4TensorPythonClass) return;
   auto hybrid_nvfp4_module =
       py::module_::import("transformer_engine.pytorch.tensor.hybrid_nvfp4_tensor");
   HybridNVFP4QuantizerClass = reinterpret_cast<PyTypeObject *>(
