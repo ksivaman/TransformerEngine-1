@@ -142,8 +142,17 @@ TensorWrapper NVTETensorFromNVFP4Tensor(py::handle tensor, Quantizer *quantizer)
     const auto &data = tensor.attr("_columnwise_data").cast<at::Tensor>();
     const auto &scale_inv = tensor.attr("_columnwise_scale_inv").cast<at::Tensor>();
     const auto &amax_columnwise = tensor.attr("_amax_columnwise").cast<at::Tensor>();
+
+    // Convert 2D shape.
+    const std::vector<size_t> tensor_shape = getTensorShape(data);
+    size_t first_dim = tensor_shape[0];
+    size_t flat_last_dim = 1;
+    for (size_t i = 1; i < tensor_shape.size(); ++i) {
+      flat_last_dim *= tensor_shape[i];
+    }
+
     ret.set_columnwise_data(data.data_ptr(), DType::kFloat4E2M1,
-                            convert_shape_back_from_fp4(getTensorShape(data), false));
+                            convert_shape_back_from_fp4({first_dim, flat_last_dim}, false));
     ret.set_columnwise_scale_inv(scale_inv.data_ptr(), DType::kFloat8E4M3,
                                  getTensorShape(scale_inv));
     ret.set_columnwise_amax(amax_columnwise.data_ptr(), DType::kFloat32,
