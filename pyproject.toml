@@ -16,14 +16,15 @@ requires = [
     "flax>=0.7.1",
     "nvidia-cuda-runtime>=13.0",
     "nvidia-cublas>=13.0",
+    "nvidia-nccl-cu12",
     "nvidia-cudnn-cu12",
     "nvidia-cuda-cccl>=13.0",
     "nvidia-cuda-nvcc>=13.0",
     "nvidia-nvtx>=13.0",
     "nvidia-cuda-nvrtc>=13.0",
     "nvidia-curand",
+    "nvidia-ml-py",
 ]
 
 # Use legacy backend to import local packages in setup.py
 build-backend = "setuptools.build_meta:__legacy__"
-

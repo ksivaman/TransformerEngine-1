@@ -28,9 +28,6 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wl,--version-script=${CMAKE_CURRENT_S
 # Python
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-# Transformer Engine library
-project(transformer_engine LANGUAGES CUDA CXX)
-
 # Attempt to find CUDA Toolkit normally
 find_package(CUDAToolkit)
 
@@ -40,21 +37,33 @@ if (NOT CUDAToolkit_FOUND)
 
   set(cuda_wheel_path "${Python_SITELIB}/nvidia/cu13")
   set(cudnn_wheel_path "${Python_SITELIB}/nvidia/cudnn")
+  set(nccl_wheel_path "${Python_SITELIB}/nvidia/nccl")
+
+  set(CMAKE_CUDA_COMPILER "${cuda_wheel_path}/bin/nvcc")
+  set(CMAKE_CXX_COMPILER "/usr/bin/gcc")
 
   if (NOT EXISTS "${cuda_wheel_path}")
     message(FATAL_ERROR "Could not find CUDA in Python environment. Please install the CUDA Toolkit. Alternatively, please install nvidia-cuda-runtime and nvidia-cublas from PyPI.")
   endif()
   if (NOT EXISTS "${cudnn_wheel_path}")
-    message(FATAL_ERROR "CUDNN not found in pip wheels either. Please install cuDNN or nvidia-cudnn (pip).")
+    message(FATAL_ERROR "CUDNN not found in pip wheels either. Please install cuDNN or nvidia-cudnn-cu12 (pip).")
+  endif()
+  if (NOT EXISTS "${nccl_wheel_path}")
+    message(FATAL_ERROR "NCCL not found in pip wheels either. Please install nccl or nvidia-nccl-cu12 (pip).")
+  endif()
+  if (NOT EXISTS "${CMAKE_CUDA_COMPILER}")
+    message(FATAL_ERROR "nvcc not found. Please install nvidia-cuda-nvcc>=13.0 (pip).")
   endif()
 
   # Manually link/include wheel versions
   include_directories(${cuda_wheel_path}/include)
   include_directories(${cudnn_wheel_path}/include)
+  include_directories(${nccl_wheel_path}/include)
 
   # Add the wheel-shared libs as raw link libraries
   link_directories(${cuda_wheel_path}/lib)
   link_directories(${cudnn_wheel_path}/lib)
+  link_directories(${nccl_wheel_path}/lib)
 
   set(USE_PYTHON_CUDA_LIBS ON)
 else()
@@ -63,6 +72,9 @@ else()
     message(FATAL_ERROR "CUDA 12.0+ is required, but found CUDA ${CUDAToolkit_VERSION}")
   endif()
 endif()
+
+# Transformer Engine library
+project(transformer_engine LANGUAGES CUDA CXX)
 
 # cuDNN frontend API
 set(CUDNN_FRONTEND_INCLUDE_DIR
