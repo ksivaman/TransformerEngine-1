@@ -14,8 +14,6 @@
 
 #include <cuda.h>
 #include <cuda_fp8.h>
-#include <torch/cuda.h>
-#include <torch/extension.h>
 
 namespace transformer_engine::pytorch {
 

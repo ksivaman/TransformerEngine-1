@@ -7,22 +7,11 @@
 #ifndef TRANSFORMER_ENGINE_PYTORCH_CSRC_COMMON_H_
 #define TRANSFORMER_ENGINE_PYTORCH_CSRC_COMMON_H_
 
-#include <ATen/ATen.h>
-#include <ATen/Dispatch.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <ATen/cuda/CUDAGeneratorImpl.h>
-#include <ATen/cudnn/Handle.h>
-#include <ATen/native/DispatchStub.h>
-#include <c10/macros/Macros.h>
-#include <c10/util/Float8_e4m3fn.h>
-#include <c10/util/Float8_e5m2.h>
 #include <cublasLt.h>
 #include <cuda.h>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 #include <cudnn.h>
-#include <torch/extension.h>
-#include <torch/torch.h>
 #include <transformer_engine/activation.h>
 #include <transformer_engine/cast.h>
 #include <transformer_engine/cast_transpose_noop.h>
@@ -43,16 +32,14 @@
 #include <transformer_engine/transformer_engine.h>
 #include <transformer_engine/transpose.h>
 
-#include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <memory>
-#include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
 #include <vector>
 
-#include "c10/util/ArrayRef.h"
 #include "common/util/logging.h"
+#include "torch_headers.h"
 
 namespace transformer_engine::pytorch {
 

@@ -4,7 +4,6 @@
  * See LICENSE for license information.
  ************************************************************************/
 
-#include <ATen/ATen.h>
 #include <pybind11/pybind11.h>
 #include <transformer_engine/transformer_engine.h>
 

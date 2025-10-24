@@ -7,7 +7,7 @@
 #ifndef TRANSFORMER_ENGINE_PYTORCH_CSRC_UTIL_H_
 #define TRANSFORMER_ENGINE_PYTORCH_CSRC_UTIL_H_
 
-#include <torch/extension.h>
+#include "torch_headers.h"
 
 #include <optional>
 

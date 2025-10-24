@@ -6,7 +6,6 @@
 
 #include "common.h"
 
-#include "c10/util/ArrayRef.h"
 #include "pybind.h"
 #include "transformer_engine/transformer_engine.h"
 

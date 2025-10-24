@@ -8,7 +8,6 @@
 
 #include "common.h"
 #include "pybind.h"
-#include "torch/torch.h"
 
 namespace transformer_engine::pytorch {
 

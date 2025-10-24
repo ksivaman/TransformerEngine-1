@@ -4,9 +4,6 @@
  * See LICENSE for license information.
  ************************************************************************/
 
-#include <ATen/ATen.h>
-#include <ATen/cuda/CUDAContext.h>
-
 #include <string>
 
 #include "../extensions.h"

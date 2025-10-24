@@ -4,17 +4,16 @@
  * See LICENSE for license information.
  ************************************************************************/
 
-#include "transformer_engine/dropout.h"
 
-#include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <pybind.h>
-
-#include <ATen/cuda/CUDAGraphsUtils.cuh>
 
 #include "../common.h"
 #include "../extensions.h"
 #include "../pybind.h"
+
 #include "transformer_engine/transformer_engine.h"
+#include "transformer_engine/dropout.h"
+
 
 namespace transformer_engine {
 namespace pytorch {

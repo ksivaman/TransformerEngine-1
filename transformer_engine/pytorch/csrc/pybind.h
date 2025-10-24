@@ -13,9 +13,9 @@
 #include <pybind11/detail/common.h>
 #include <pybind11/functional.h>
 #include <pybind11/pybind11.h>
-#include <torch/torch.h>
 
 #include "common.h"
+#include "torch_headers.h"
 #include "transformer_engine/transformer_engine.h"
 
 namespace transformer_engine::pytorch {
