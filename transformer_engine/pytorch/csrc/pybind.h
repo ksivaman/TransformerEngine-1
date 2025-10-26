@@ -10,9 +10,6 @@
 #define TRANSFORMER_ENGINE_PYTORCH_CSRC_EXTENSIONS_PYBIND_H_
 
 #include <Python.h>
-#include <pybind11/detail/common.h>
-#include <pybind11/functional.h>
-#include <pybind11/pybind11.h>
 
 #include "common.h"
 #include "torch_headers.h"

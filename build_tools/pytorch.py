@@ -5,11 +5,12 @@
 """PyTorch related extensions."""
 import os
 from pathlib import Path
+from packaging.version import parse
+from typing import List
 
 import setuptools
 
 from .utils import all_files_in_dir, cuda_version, get_cuda_include_dirs, debug_build_enabled
-from typing import List
 
 
 def install_requirements() -> List[str]:
@@ -83,7 +84,15 @@ def setup_pytorch_extension(
     # Construct PyTorch CUDA extension
     sources = [str(path) for path in sources]
     include_dirs = [str(path) for path in include_dirs]
+    
+    import torch
     from torch.utils.cpp_extension import CppExtension
+
+    torch_version = parse(torch.__version__)
+    torch_target_version_for_stable_libtorch_abi = parse("2.9.0.dev20250830") 
+    if torch_version >= torch_target_version_for_stable_libtorch_abi:
+        cxx_flags.append("-DNVTE_LIBTORCH_STABLE_ABI")
+        # cxx_flags.append("-DTORCH_STABLE_ONLY")
 
     return CppExtension(
         name="transformer_engine_torch",

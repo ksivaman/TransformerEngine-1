@@ -6,12 +6,6 @@
 
 #include "pybind.h"
 
-#include <pybind11/cast.h>
-#include <pybind11/detail/common.h>
-#include <pybind11/functional.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-
 #include <memory>
 #include <optional>
 #include <vector>

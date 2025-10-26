@@ -4,8 +4,6 @@
  * See LICENSE for license information.
  ************************************************************************/
 
-#include <pybind11/pybind11.h>
-
 #include <utility>
 #include <vector>
 

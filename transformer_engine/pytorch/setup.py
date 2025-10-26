@@ -138,7 +138,8 @@ class CachedWheelsCommand(_bdist_wheel):
 if __name__ == "__main__":
     # Extensions
     common_headers_dir = "common_headers"
-    copy_common_headers(current_file_path.parent, str(current_file_path / common_headers_dir))
+    copy_common_headers(current_file_path.parent, str(current_file_path / common_headers_dir))  
+
     ext_modules = [
         setup_pytorch_extension(
             "csrc", current_file_path / "csrc", current_file_path / common_headers_dir
