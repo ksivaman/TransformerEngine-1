@@ -136,9 +136,9 @@ at::Tensor fused_score_for_moe_aux_loss_bwd(int num_tokens, int num_experts,
   auto grad_scores_cu = makeTransformerEngineTensor(grad_scores);
   auto grad_logits_cu = makeTransformerEngineTensor(grad_logits);
 
-  nvte_fused_score_for_moe_aux_loss_backward(
-      intermediate_output_cu.data(), grad_scores_cu.data(), num_tokens, num_experts, topk,
-      score_function_value, grad_logits_cu.data(), get_current_cuda_stream());
+  nvte_fused_score_for_moe_aux_loss_backward(intermediate_output_cu.data(), grad_scores_cu.data(),
+                                             num_tokens, num_experts, topk, score_function_value,
+                                             grad_logits_cu.data(), get_current_cuda_stream());
 
   return grad_logits;
 }

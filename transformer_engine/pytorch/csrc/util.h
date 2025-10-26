@@ -7,10 +7,9 @@
 #ifndef TRANSFORMER_ENGINE_PYTORCH_CSRC_UTIL_H_
 #define TRANSFORMER_ENGINE_PYTORCH_CSRC_UTIL_H_
 
-#include "torch_headers.h"
-
 #include <optional>
 
+#include "torch_headers.h"
 #include "transformer_engine/transformer_engine.h"
 
 /*! \brief Swizzle the scaling factor of the input tensor.

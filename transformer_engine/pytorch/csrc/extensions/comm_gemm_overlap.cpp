@@ -272,8 +272,7 @@ void CommOverlapP2P::copy_into_buffer(const at::Tensor &input, bool local_chunk)
 
   // Copy data
   NVTE_CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, input_size * element_size,
-                                  cudaMemcpyDeviceToDevice,
-                                  get_current_cuda_stream()));
+                                  cudaMemcpyDeviceToDevice, get_current_cuda_stream()));
 }
 
 at::Tensor CommOverlapP2P::get_buffer(bool local_chunk, std::optional<std::vector<int64_t>> shape) {

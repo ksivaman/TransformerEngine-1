@@ -9,9 +9,7 @@
 #include "common.h"
 #include "common/common.h"
 
-
 cudaStream_t get_current_cuda_stream() {
-
 #ifdef NVTE_LIBTORCH_STABLE_ABI
   auto device_idx = torch::stable::accelerator::getCurrentDeviceIndex();
   auto stream = (cudaStream_t)torch::stable::accelerator::getCurrentStream(device_idx).id();
@@ -19,9 +17,7 @@ cudaStream_t get_current_cuda_stream() {
 #else
   return at::cuda::getCurrentCUDAStream().stream();
 #endif
-
 }
-
 
 std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrapper& input,
                                                   bool rowwise) {

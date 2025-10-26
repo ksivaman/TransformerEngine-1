@@ -57,8 +57,7 @@ at::Tensor scaled_softmax_backward(at::Tensor output_grad_, at::Tensor softmax_r
 
   // Produce gradients in place.
   nvte_scaled_softmax_backward(output_grads_cu.data(), softmax_results_cu.data(),
-                               output_grads_cu.data(), scale_factor,
-                               get_current_cuda_stream());
+                               output_grads_cu.data(), scale_factor, get_current_cuda_stream());
 
   return output_grads;
 }
@@ -120,8 +119,7 @@ at::Tensor scaled_masked_softmax_backward(at::Tensor output_grad_, at::Tensor so
 
   // Produce gradients in place.
   nvte_scaled_softmax_backward(output_grads_cu.data(), softmax_results_cu.data(),
-                               output_grads_cu.data(), scale_factor,
-                               get_current_cuda_stream());
+                               output_grads_cu.data(), scale_factor, get_current_cuda_stream());
 
   return output_grads;
 }

@@ -279,9 +279,8 @@ void Float8Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
   if (noop_flag) {
     quant_config.set_noop_tensor(noop_flag->data());
   }
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream());
-  });
+  NVTE_SCOPED_GIL_RELEASE(
+      { nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream()); });
 }
 
 Float8CurrentScalingQuantizer::Float8CurrentScalingQuantizer(const py::handle& quantizer)
@@ -813,9 +812,8 @@ void Float8BlockQuantizer::quantize(const TensorWrapper& input, TensorWrapper& o
   if (all_gather_usage) {
     quant_config.set_float8_block_scale_tensor_format(Float8BlockScaleTensorFormat::COMPACT);
   }
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream());
-  });
+  NVTE_SCOPED_GIL_RELEASE(
+      { nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream()); });
 }
 
 std::vector<size_t> Float8BlockQuantizer::get_scale_shape(const std::vector<size_t>& shape,
@@ -1094,9 +1092,8 @@ void MXFP8Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
   if (noop_flag) {
     quant_config.set_noop_tensor(noop_flag->data());
   }
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream());
-  });
+  NVTE_SCOPED_GIL_RELEASE(
+      { nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream()); });
 }
 
 std::vector<size_t> MXFP8Quantizer::get_scale_shape(const std::vector<size_t>& shape,

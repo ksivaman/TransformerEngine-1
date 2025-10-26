@@ -31,8 +31,7 @@ void mha_fill(const transformer_engine::TensorWrapper &self, const at::Tensor &s
   size_t num_rows_to_zero = max_tokens - start_row;
   size_t total_bytes = num_rows_to_zero * fcd_size * element_size_bits / 8;
 
-  NVTE_SCOPED_GIL_RELEASE(
-      { nvte_memset(base_ptr, 0, total_bytes, get_current_cuda_stream()); });
+  NVTE_SCOPED_GIL_RELEASE({ nvte_memset(base_ptr, 0, total_bytes, get_current_cuda_stream()); });
 }
 
 }  // namespace
@@ -355,7 +354,8 @@ std::vector<py::object> fused_attn_bwd(
       dQKV = torch::empty(tmp_shape, options);
       dQ = dQKV.narrow(dQKV.dim() - 3, 0, 1).squeeze(tmp_shape.size() - 3);
       dK = dQKV.narrow(dQKV.dim() - 3, 1, 1).squeeze(tmp_shape.size() - 3);
-      dV = dQKV.narrow(dQKV.dim() - 3, 2, dQKV.size(dQKV.dim() - 3) - 2).squeeze(tmp_shape.size() - 3);
+      dV = dQKV.narrow(dQKV.dim() - 3, 2, dQKV.size(dQKV.dim() - 3) - 2)
+               .squeeze(tmp_shape.size() - 3);
       break;
     case NVTE_QKV_Layout_Group::NVTE_H3D:
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
@@ -363,7 +363,8 @@ std::vector<py::object> fused_attn_bwd(
       dQKV = torch::empty(tmp_shape, options);
       dQ = dQKV.narrow(dQKV.dim() - 2, 0, 1).squeeze(tmp_shape.size() - 2);
       dK = dQKV.narrow(dQKV.dim() - 2, 1, 1).squeeze(tmp_shape.size() - 2);
-      dV = dQKV.narrow(dQKV.dim() - 2, 2, dQKV.size(dQKV.dim() - 2) - 2).squeeze(tmp_shape.size() - 2);
+      dV = dQKV.narrow(dQKV.dim() - 2, 2, dQKV.size(dQKV.dim() - 2) - 2)
+               .squeeze(tmp_shape.size() - 2);
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_2HD:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
@@ -703,8 +704,7 @@ at::Tensor thd_read_second_half_lse(const at::Tensor &lse, const at::Tensor &cu_
   auto te_half_lse = makeTransformerEngineTensor(half_lse);
 
   nvte_cp_thd_read_second_half_lse(te_lse.data(), te_cu_seqlens.data(), te_half_lse.data(),
-                                   lse_packed, second_half_lse_seqlen,
-                                   get_current_cuda_stream());
+                                   lse_packed, second_half_lse_seqlen, get_current_cuda_stream());
 
   return half_lse;
 }
@@ -737,8 +737,7 @@ void thd_grad_correction(at::Tensor grad, const at::Tensor &grad_per_step,
   auto te_grad_per_step = makeTransformerEngineTensor(grad_per_step);
   auto te_cu_seqlens = makeTransformerEngineTensor(cu_seqlens);
   nvte_cp_thd_grad_correction(te_grad.data(), te_grad_per_step.data(), te_cu_seqlens.data(),
-                              first_half.data(), second_half.data(),
-                              get_current_cuda_stream());
+                              first_half.data(), second_half.data(), get_current_cuda_stream());
 }
 
 /***************************************************************************************************

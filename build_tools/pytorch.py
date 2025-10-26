@@ -84,7 +84,7 @@ def setup_pytorch_extension(
     # Construct PyTorch CUDA extension
     sources = [str(path) for path in sources]
     include_dirs = [str(path) for path in include_dirs]
-    
+
     import torch
     from torch.utils.cpp_extension import CppExtension
 

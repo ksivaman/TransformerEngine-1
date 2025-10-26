@@ -91,9 +91,8 @@ py::object dequantize(const py::handle &input, transformer_engine::DType otype) 
 
   auto [out_tensor, out] = q.create_tensor(shape, otype);
 
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_dequantize(input_tensor.data(), out_tensor.data(), get_current_cuda_stream());
-  });
+  NVTE_SCOPED_GIL_RELEASE(
+      { nvte_dequantize(input_tensor.data(), out_tensor.data(), get_current_cuda_stream()); });
 
   return out;
 }
