@@ -66,7 +66,7 @@ namespace py = pybind11;
 #endif
 
 
-cudaStream_t get_current_stream();
+cudaStream_t get_current_cuda_stream();
 
 
 #endif  // TRANSFORMER_ENGINE_PYTORCH_CSRC_TORCH_HEADERS_H_

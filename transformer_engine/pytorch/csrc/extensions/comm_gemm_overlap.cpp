@@ -174,7 +174,7 @@ void CommOverlap::copy_into_buffer(const at::Tensor &input, bool local_chunk) {
   }
 
   // Copy data
-  auto stream_main = at::cuda::getCurrentCUDAStream();
+  auto stream_main = get_current_cuda_stream();
   NVTE_CHECK_CUDA(cudaEventRecord(_start_d2dcopy, (cudaStream_t)stream_main));
   NVTE_CHECK_CUDA(cudaStreamWaitEvent((cudaStream_t)_stream_comm, _start_d2dcopy, 0));
   NVTE_CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, input_size * element_size,
@@ -274,7 +274,7 @@ void CommOverlapP2P::copy_into_buffer(const at::Tensor &input, bool local_chunk)
   // Copy data
   NVTE_CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, input_size * element_size,
                                   cudaMemcpyDeviceToDevice,
-                                  (cudaStream_t)at::cuda::getCurrentCUDAStream()));
+                                  get_current_cuda_stream()));
 }
 
 at::Tensor CommOverlapP2P::get_buffer(bool local_chunk, std::optional<std::vector<int64_t>> shape) {
@@ -314,7 +314,7 @@ std::pair<at::Stream, at::Stream> CommOverlapP2P::get_communication_stream() {
 
 void transformer_engine::pytorch::bulk_overlap_ag_with_external_gemm(
     CommOverlap &allgather_communicator, at::Stream send_stream, at::Stream recv_stream) {
-  auto main_stream = at::cuda::getCurrentCUDAStream();
+  auto main_stream = get_current_cuda_stream();
   allgather_communicator.bulk_overlap_external_ag(at::cuda::CUDAStream(send_stream),
                                                   at::cuda::CUDAStream(recv_stream), main_stream);
 }

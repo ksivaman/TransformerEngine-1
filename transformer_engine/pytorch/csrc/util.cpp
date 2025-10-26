@@ -17,7 +17,7 @@ cudaStream_t get_current_cuda_stream() {
   auto stream = (cudaStream_t)torch::stable::accelerator::getCurrentStream(device_idx).id();
   return stream;
 #else
-  return at::cuda::getCurrentCUDAStream();
+  return at::cuda::getCurrentCUDAStream().stream();
 #endif
 
 }
@@ -85,7 +85,7 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
   }
 
   // Launch kernel
-  nvte_swizzle_scaling_factors(input_cu.data(), output_cu.data(), at::cuda::getCurrentCUDAStream());
+  nvte_swizzle_scaling_factors(input_cu.data(), output_cu.data(), get_current_cuda_stream());
 
   if (rowwise) {
     input.set_rowwise_scale_inv(swizzled_scale_inv_dptr, scale_inv_dtype, scale_inv_shape);
@@ -195,7 +195,7 @@ std::optional<at::Tensor> multi_tensor_swizzle_scaling_factors(
 
   // Launch kernel
   nvte_multi_tensor_swizzle_scaling_factors(input_tensors.data(), output_tensors.data(),
-                                            input_tensors.size(), at::cuda::getCurrentCUDAStream());
+                                            input_tensors.size(), get_current_cuda_stream());
 
   return buffer;
 }
@@ -261,7 +261,7 @@ at::Tensor convert_block_scaling_to_mxfp8_tensor(transformer_engine::TensorWrapp
 
   // Convert scaling factors from FP8 block scaling GEMM_READY format to mxfp8 swizzled format
   nvte_swizzle_block_scaling_to_mxfp8_scaling_factors(input_cu.data(), output_cu.data(),
-                                                      at::cuda::getCurrentCUDAStream());
+                                                      get_current_cuda_stream());
 
   // Set the input tensor to be the converted mxfp8 tensor and return the swizzled scaling factor
   // for it to be kept alive during the GEMM

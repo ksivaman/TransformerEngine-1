@@ -39,7 +39,7 @@ std::vector<py::object> layernorm_bwd(const at::Tensor &dz, const at::Tensor &x,
     nvte_layernorm_bwd(dz_cu.data(), x_cu.data(), mu_cu.data(), rsigma_cu.data(), gamma_cu.data(),
                        dx_cu.data(), dgamma_cu.data(), dbeta_cu.data(), workspace.data(),
                        at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                       zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                       zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Alloc space for Tensors.
@@ -52,7 +52,7 @@ std::vector<py::object> layernorm_bwd(const at::Tensor &dz, const at::Tensor &x,
     nvte_layernorm_bwd(dz_cu.data(), x_cu.data(), mu_cu.data(), rsigma_cu.data(), gamma_cu.data(),
                        dx_cu.data(), dgamma_cu.data(), dbeta_cu.data(), workspace.data(),
                        at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                       zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                       zero_centered_gamma, get_current_cuda_stream());
   });
 
   return {py::cast(dx), py::cast(dgamma), py::cast(dbeta)};
@@ -163,7 +163,7 @@ std::vector<py::object> layernorm_fwd(py::handle input, py::handle weight, Maybe
                        kernel_out_nvte->data(), mu_nvte.data(), rsigma_nvte.data(),
                        workspace.data(),
                        at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                       zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                       zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Allocate workspace
@@ -177,7 +177,7 @@ std::vector<py::object> layernorm_fwd(py::handle input, py::handle weight, Maybe
                        kernel_out_nvte->data(), mu_nvte.data(), rsigma_nvte.data(),
                        workspace.data(),
                        at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                       zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                       zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Quantize output if needed
@@ -224,7 +224,7 @@ std::vector<py::object> rmsnorm_bwd(const at::Tensor &dz, const at::Tensor &x,
     nvte_rmsnorm_bwd(dz_cu.data(), x_cu.data(), rsigma_cu.data(), gamma_cu.data(), dx_cu.data(),
                      dgamma_cu.data(), workspace.data(),
                      at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                     zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                     zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Alloc space for Tensors.
@@ -237,7 +237,7 @@ std::vector<py::object> rmsnorm_bwd(const at::Tensor &dz, const at::Tensor &x,
     nvte_rmsnorm_bwd(dz_cu.data(), x_cu.data(), rsigma_cu.data(), gamma_cu.data(), dx_cu.data(),
                      dgamma_cu.data(), workspace.data(),
                      at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                     zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                     zero_centered_gamma, get_current_cuda_stream());
   });
 
   return {py::cast(dx), py::cast(dgamma)};
@@ -270,7 +270,7 @@ std::vector<py::object> rmsnorm_bwd_add(const at::Tensor &dz, const at::Tensor &
     nvte_rmsnorm_bwd_add(dz_cu.data(), x_cu.data(), add_cu.data(), rsigma_cu.data(),
                          gamma_cu.data(), dx_cu.data(), dgamma_cu.data(), workspace.data(),
                          at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                         zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                         zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Alloc space for Tensors.
@@ -283,7 +283,7 @@ std::vector<py::object> rmsnorm_bwd_add(const at::Tensor &dz, const at::Tensor &
     nvte_rmsnorm_bwd_add(dz_cu.data(), x_cu.data(), add_cu.data(), rsigma_cu.data(),
                          gamma_cu.data(), dx_cu.data(), dgamma_cu.data(), workspace.data(),
                          at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                         zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                         zero_centered_gamma, get_current_cuda_stream());
   });
 
   return {py::cast(dx), py::cast(dgamma)};
@@ -386,7 +386,7 @@ std::vector<py::object> rmsnorm_fwd(const py::handle &input, const py::handle &w
     nvte_rmsnorm_fwd(input_nvte.data(), weight_nvte.data(), eps, kernel_out_nvte->data(),
                      rsigma_nvte.data(), workspace.data(),
                      at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                     zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                     zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Allocate workspace
@@ -399,7 +399,7 @@ std::vector<py::object> rmsnorm_fwd(const py::handle &input, const py::handle &w
     nvte_rmsnorm_fwd(input_nvte.data(), weight_nvte.data(), eps, kernel_out_nvte->data(),
                      rsigma_nvte.data(), workspace.data(),
                      at::cuda::getCurrentDeviceProperties()->multiProcessorCount - sm_margin,
-                     zero_centered_gamma, at::cuda::getCurrentCUDAStream());
+                     zero_centered_gamma, get_current_cuda_stream());
   });
 
   // Quantize output if needed

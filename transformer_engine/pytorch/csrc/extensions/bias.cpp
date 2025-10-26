@@ -78,7 +78,7 @@ std::vector<py::object> bgrad_quantize(const at::Tensor &grad_output, py::handle
   // Query workspace size
   TensorWrapper workspace_nvte;
   at::Tensor workspace_torch;
-  auto stream = at::cuda::getCurrentCUDAStream();
+  auto stream = get_current_cuda_stream();
   NVTE_SCOPED_GIL_RELEASE({
     nvte_quantize_dbias(grad_output_nvte.data(), grad_input_nvte.data(), grad_bias_nvte.data(),
                         workspace_nvte.data(), stream);
@@ -158,7 +158,7 @@ std::vector<py::object> dact_dbias(
   }
 
   // Perform compute
-  auto stream = at::cuda::getCurrentCUDAStream();
+  auto stream = get_current_cuda_stream();
   switch (impl) {
     case Impl::UNFUSED:
       // Unfused dact, dbias, quantize

@@ -23,7 +23,7 @@ void compute_amax(const at::Tensor& tensor, at::Tensor& amax) {
       DType::kFloat8E4M3,  // It doesn't matter because we only compute amax.
       amax_ptr);
 
-  nvte_compute_amax(te_input.data(), fake_te_output.data(), at::cuda::getCurrentCUDAStream());
+  nvte_compute_amax(te_input.data(), fake_te_output.data(), get_current_cuda_stream());
 }
 
 void fused_amax_and_scale_update_after_reduction(const at::Tensor& amax_reduction_buffer,
@@ -54,7 +54,7 @@ void fused_amax_and_scale_update_after_reduction(const at::Tensor& amax_reductio
   nvte_delayed_scaling_recipe_amax_and_scale_update_after_reduction(
       makeTransformerEngineTensor(amax_reduction_buffer).data(), te_amax_histories, te_scales,
       amax_compute_algo.c_str(), static_cast<NVTEDType>(fp8_dtype), margin,
-      at::cuda::getCurrentCUDAStream());
+      get_current_cuda_stream());
   for (auto& t : te_amax_histories) {
     nvte_destroy_tensor(t);
   }

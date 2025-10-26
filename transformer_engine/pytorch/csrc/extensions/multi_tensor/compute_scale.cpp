@@ -17,7 +17,7 @@ void multi_tensor_compute_scale_and_scale_inv_cuda(
 
   nvte_multi_tensor_compute_scale_and_scale_inv_cuda(
       chunk_size, noop_flag_cu.data(), tensor_lists_ptr.data(), num_lists, num_tensors, max_fp8,
-      force_pow_2_scales, epsilon, at::cuda::getCurrentCUDAStream());
+      force_pow_2_scales, epsilon, get_current_cuda_stream());
 }
 
 }  // namespace transformer_engine::pytorch

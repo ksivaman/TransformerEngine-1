@@ -309,7 +309,7 @@ void philox_unpack(at::PhiloxCudaState arg, int64_t* rng_state_ptr) {
   NVTE_SCOPED_GIL_RELEASE({
     nvte_extract_seed_and_offset(rng_state_ptr, arg.captured_, arg.seed_.ptr, arg.seed_.val,
                                  arg.offset_.ptr, arg.offset_.val, arg.offset_intragraph_,
-                                 at::cuda::getCurrentCUDAStream());
+                                 get_current_cuda_stream());
   });
 }
 

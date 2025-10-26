@@ -53,14 +53,14 @@ std::vector<py::object> dropout_fwd(const py::handle &input, float dropout_proba
     nvte_extract_seed_and_offset(
         reinterpret_cast<int64_t *>(rng_state_pyt.data_ptr()), philox_args.captured_,
         philox_args.seed_.ptr, philox_args.seed_.val, philox_args.offset_.ptr,
-        philox_args.offset_.val, philox_args.offset_intragraph_, at::cuda::getCurrentCUDAStream());
+        philox_args.offset_.val, philox_args.offset_intragraph_, get_current_cuda_stream());
   });
   auto rng_state_nvte = makeTransformerEngineTensor(rng_state_pyt);
 
   // Launch kernel
   NVTE_SCOPED_GIL_RELEASE({
     nvte_dropout_fwd(input_nvte.data(), out_nvte.data(), mask_nvte.data(), rng_state_nvte.data(),
-                     dropout_probability, at::cuda::getCurrentCUDAStream());
+                     dropout_probability, get_current_cuda_stream());
   });
 
   return {py::cast(std::move(*out)), py::cast(mask_pyt)};
@@ -76,7 +76,7 @@ py::object dropout_bwd(const at::Tensor &grad_output, const at::Tensor &mask,
   auto grad_input_nvte = makeTransformerEngineTensor(*grad_input);
   NVTE_SCOPED_GIL_RELEASE({
     nvte_dropout_bwd(grad_output_nvte.data(), mask_nvte.data(), grad_input_nvte.data(),
-                     dropout_probability, at::cuda::getCurrentCUDAStream());
+                     dropout_probability, get_current_cuda_stream());
   });
   return py::cast(std::move(*grad_input));
 }

@@ -280,7 +280,7 @@ void Float8Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
     quant_config.set_noop_tensor(noop_flag->data());
   }
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
+    nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream());
   });
 }
 
@@ -494,7 +494,7 @@ std::pair<TensorWrapper, py::object> Float8CurrentScalingQuantizer::convert_and_
 void Float8CurrentScalingQuantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& out,
                                                   const std::optional<TensorWrapper>& noop_flag,
                                                   bool compute_amax) {
-  auto stream = at::cuda::getCurrentCUDAStream();
+  auto stream = get_current_cuda_stream();
 
   // Nothing to be done if input is empty
   if (input.numel() == 0) {
@@ -814,7 +814,7 @@ void Float8BlockQuantizer::quantize(const TensorWrapper& input, TensorWrapper& o
     quant_config.set_float8_block_scale_tensor_format(Float8BlockScaleTensorFormat::COMPACT);
   }
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
+    nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream());
   });
 }
 
@@ -1095,7 +1095,7 @@ void MXFP8Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
     quant_config.set_noop_tensor(noop_flag->data());
   }
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
+    nvte_quantize_v2(input.data(), out.data(), quant_config, get_current_cuda_stream());
   });
 }
 
@@ -1289,7 +1289,7 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::create_unquantized_tensor_w
   out_cpp.set_amax(amax_ptr, DType::kFloat32, std::vector<size_t>{1});
 
   // Zero out amax
-  NVTE_CHECK_CUDA(cudaMemsetAsync(amax_ptr, 0, sizeof(float), at::cuda::getCurrentCUDAStream()));
+  NVTE_CHECK_CUDA(cudaMemsetAsync(amax_ptr, 0, sizeof(float), get_current_cuda_stream()));
 
   return {std::move(out_cpp), std::move(out_py)};
 }
@@ -1448,7 +1448,7 @@ void NVFP4Quantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& ou
     return;
   }
 
-  auto stream = at::cuda::getCurrentCUDAStream();
+  auto stream = get_current_cuda_stream();
 
   QuantizationConfigWrapper quant_config;
   if (noop_flag) {
@@ -1660,12 +1660,12 @@ void NVFP4Quantizer::quantize_with_amax(TensorWrapper& input, TensorWrapper& out
   if (input_amax_ptr != output_rowwise_amax_ptr && input_amax_ptr != nullptr &&
       output_rowwise_amax_ptr != nullptr) {
     NVTE_CHECK_CUDA(cudaMemcpyAsync(output_rowwise_amax_ptr, input_amax_ptr, sizeof(float),
-                                    cudaMemcpyDeviceToDevice, at::cuda::getCurrentCUDAStream()));
+                                    cudaMemcpyDeviceToDevice, get_current_cuda_stream()));
   }
   if (input_amax_ptr != output_columnwise_amax_ptr && input_amax_ptr != nullptr &&
       output_columnwise_amax_ptr != nullptr) {
     NVTE_CHECK_CUDA(cudaMemcpyAsync(output_columnwise_amax_ptr, input_amax_ptr, sizeof(float),
-                                    cudaMemcpyDeviceToDevice, at::cuda::getCurrentCUDAStream()));
+                                    cudaMemcpyDeviceToDevice, get_current_cuda_stream()));
   }
   input.set_amax(nullptr, DType::kFloat32, input.defaultShape);
 

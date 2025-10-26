@@ -59,7 +59,7 @@ std::tuple<at::Tensor, at::Tensor, std::vector<at::Tensor>> moe_permute_fwd(
   at::Tensor row_id_map = torch::empty(
       {num_tokens * topK}, torch::dtype(torch::kInt32).device(torch::kCUDA).requires_grad(false));
 
-  auto stream = at::cuda::getCurrentCUDAStream().stream();
+  auto stream = get_current_cuda_stream();
 
   auto input_cu = makeTransformerEngineTensor(
       input.data_ptr(),
@@ -96,7 +96,7 @@ at::Tensor moe_unpermute_fwd(at::Tensor input, const DType dtype, at::Tensor row
       torch::empty({num_tokens, num_cols},
                    torch::dtype(input.scalar_type()).device(torch::kCUDA).requires_grad(false));
 
-  auto stream = at::cuda::getCurrentCUDAStream().stream();
+  auto stream = get_current_cuda_stream();
 
   auto input_cu = makeTransformerEngineTensor(
       input.data_ptr(),
@@ -130,7 +130,7 @@ std::tuple<at::Tensor, at::Tensor> moe_unpermute_bwd(at::Tensor input_bwd, at::T
   at::Tensor prob_grad = torch::empty(
       {num_tokens, topK}, torch::dtype(torch::kFloat32).device(torch::kCUDA).requires_grad(false));
 
-  auto stream = at::cuda::getCurrentCUDAStream().stream();
+  auto stream = get_current_cuda_stream();
 
   auto input_bwd_cu = makeTransformerEngineTensor(
       input_bwd.data_ptr(),

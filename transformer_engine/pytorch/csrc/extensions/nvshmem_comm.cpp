@@ -63,7 +63,7 @@ void init_nvshmem_backend(c10d::ProcessGroup *process_group) {
 void nvshmem_wait_on_current_stream(torch::Tensor signal, const std::string &wait_kind) {
 #ifdef NVTE_ENABLE_NVSHMEM
   uint64_t *sig_addr = reinterpret_cast<uint64_t *>(signal.data_ptr());
-  cudaStream_t cur_stream = (cudaStream_t)at::cuda::getCurrentCUDAStream();
+  cudaStream_t cur_stream = get_current_cuda_stream();
 
   WaitKind wait_kind_enum = WaitKind::STREAM_WAIT;
 
@@ -107,10 +107,10 @@ void nvshmem_send_on_current_stream(torch::Tensor src, torch::Tensor dst, int pe
   uint64_t *sig_addr = reinterpret_cast<uint64_t *>(signal.data_ptr());
   auto nelement = src.numel() * src.element_size();
   uint64_t sigval = 1;
-  at::cuda::CUDAStream cur_stream = at::cuda::getCurrentCUDAStream();
+  cudaStream_t cur_stream = get_current_cuda_stream();
 
   nvshmemx_putmem_signal_on_stream(dst_ptr, src_ptr, nelement, sig_addr, sigval, NVSHMEM_SIGNAL_SET,
-                                   peer, (cudaStream_t)cur_stream);
+                                   peer, cur_stream);
 #else
   NVTE_ERROR(
       "Internal TE error: nvshmem_send_on_current_stream cannot be initialized with valid PyTorch ",

@@ -92,7 +92,7 @@ py::object dequantize(const py::handle &input, transformer_engine::DType otype) 
   auto [out_tensor, out] = q.create_tensor(shape, otype);
 
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_dequantize(input_tensor.data(), out_tensor.data(), at::cuda::getCurrentCUDAStream());
+    nvte_dequantize(input_tensor.data(), out_tensor.data(), get_current_cuda_stream());
   });
 
   return out;
@@ -139,7 +139,7 @@ void multi_tensor_quantize_impl(const std::vector<TensorWrapper> &input_list,
     }
     NVTE_SCOPED_GIL_RELEASE({
       nvte_multi_cast_transpose(nvte_tensor_input_list.size(), nvte_tensor_input_list.data(),
-                                nvte_tensor_output_list.data(), at::cuda::getCurrentCUDAStream());
+                                nvte_tensor_output_list.data(), get_current_cuda_stream());
     });
   } else {
     // Quantize kernels individually
