@@ -143,7 +143,7 @@ std::vector<py::object> fused_attn_fwd(
     auto d = q_shape[q_shape.size() - 1];
     if (set_zero && (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD)) {
       if ((h * d) % block_size == 0) {
-        mha_fill(te_O, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+        mha_fill(te_O, cu_seqlens_q.narrow(0, cu_seqlens_q.size(0) - 1, 1));
       } else {
         te_O.zero_(get_current_cuda_stream());
       }
@@ -353,32 +353,17 @@ std::vector<py::object> fused_attn_bwd(
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 2, int64_t(3));
       dQKV = torch::empty(tmp_shape, options);
-      dQ = dQKV.index({"...", torch::indexing::Slice(0, 1, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 3);
-      dK = dQKV.index({"...", torch::indexing::Slice(1, 2, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 3);
-      dV = dQKV.index({"...", torch::indexing::Slice(2, torch::indexing::None, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 3);
+      dQ = dQKV.narrow(dQKV.dim() - 3, 0, 1).squeeze(tmp_shape.size() - 3);
+      dK = dQKV.narrow(dQKV.dim() - 3, 1, 1).squeeze(tmp_shape.size() - 3);
+      dV = dQKV.narrow(dQKV.dim() - 3, 2, dQKV.size(dQKV.dim() - 3) - 2).squeeze(tmp_shape.size() - 3);
       break;
     case NVTE_QKV_Layout_Group::NVTE_H3D:
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(3));
       dQKV = torch::empty(tmp_shape, options);
-      dQ = dQKV.index({"...", torch::indexing::Slice(0, 1, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 2);
-      dK = dQKV.index({"...", torch::indexing::Slice(1, 2, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 2);
-      dV = dQKV.index({"...", torch::indexing::Slice(2, torch::indexing::None, 1),
-                       torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 2);
+      dQ = dQKV.narrow(dQKV.dim() - 2, 0, 1).squeeze(tmp_shape.size() - 2);
+      dK = dQKV.narrow(dQKV.dim() - 2, 1, 1).squeeze(tmp_shape.size() - 2);
+      dV = dQKV.narrow(dQKV.dim() - 2, 2, dQKV.size(dQKV.dim() - 2) - 2).squeeze(tmp_shape.size() - 2);
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_2HD:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
@@ -386,14 +371,8 @@ std::vector<py::object> fused_attn_bwd(
       tmp_shape = std::vector<int64_t>{k_shape.begin(), k_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 2, int64_t(2));
       dKV = torch::empty(tmp_shape, options);
-      dK = dKV.index({"...", torch::indexing::Slice(0, 1, 1),
-                      torch::indexing::Slice(0, torch::indexing::None, 1),
-                      torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 3);
-      dV = dKV.index({"...", torch::indexing::Slice(1, torch::indexing::None, 1),
-                      torch::indexing::Slice(0, torch::indexing::None, 1),
-                      torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 3);
+      dK = dKV.narrow(dKV.dim() - 3, 0, 1).squeeze(tmp_shape.size() - 3);
+      dV = dKV.narrow(dKV.dim() - 3, 1, dKV.size(dKV.dim() - 3) - 1).squeeze(tmp_shape.size() - 3);
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_H2D:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
@@ -401,12 +380,8 @@ std::vector<py::object> fused_attn_bwd(
       tmp_shape = std::vector<int64_t>{k_shape.begin(), k_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(2));
       dKV = torch::empty(tmp_shape, options);
-      dK = dKV.index({"...", torch::indexing::Slice(0, 1, 1),
-                      torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 2);
-      dV = dKV.index({"...", torch::indexing::Slice(1, torch::indexing::None, 1),
-                      torch::indexing::Slice(0, torch::indexing::None, 1)})
-               .squeeze(tmp_shape.size() - 2);
+      dK = dKV.narrow(dKV.dim() - 2, 0, 1).squeeze(tmp_shape.size() - 2);
+      dV = dKV.narrow(dKV.dim() - 2, 1, dKV.size(dKV.dim() - 2) - 1).squeeze(tmp_shape.size() - 2);
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_HD_HD:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
@@ -430,9 +405,9 @@ std::vector<py::object> fused_attn_bwd(
     if (set_zero && (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD)) {
       if (((h_q * d_qk) % block_size == 0) && ((h_kv * d_qk) % block_size == 0) &&
           dQ.is_contiguous() && dK.is_contiguous() && dV.is_contiguous()) {
-        mha_fill(te_dQ, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
-        mha_fill(te_dK, cu_seqlens_kv.index({torch::indexing::Slice(-1, torch::indexing::None)}));
-        mha_fill(te_dV, cu_seqlens_kv.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+        mha_fill(te_dQ, cu_seqlens_q.narrow(0, cu_seqlens_q.size(0) - 1, 1));
+        mha_fill(te_dK, cu_seqlens_kv.narrow(0, cu_seqlens_kv.size(0) - 1, 1));
+        mha_fill(te_dV, cu_seqlens_kv.narrow(0, cu_seqlens_kv.size(0) - 1, 1));
       } else {
         dQ.fill_(0);
         dK.fill_(0);

@@ -10,7 +10,6 @@
 #define HALF_BYTES 2
 #define UB_MAX_SM 32
 
-using namespace torch::indexing;
 using namespace std::placeholders;
 
 namespace te = transformer_engine;
