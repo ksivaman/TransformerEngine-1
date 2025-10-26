@@ -154,7 +154,7 @@ if __name__ == "__main__":
     cuda_major_version = parse(torch.version.cuda).major
     assert cuda_major_version in (12, 13), f"Unsupported cuda version {torch.version.cuda}."
     te_core = f"transformer_engine_cu{cuda_major_version}=={__version__}"
-    install_requires = install_requirements() + [te_core]
+    install_requires = install_requirements() #+ [te_core]
 
     # Configure package
     setuptools.setup(

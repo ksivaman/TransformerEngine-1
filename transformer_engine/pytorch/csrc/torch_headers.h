@@ -19,33 +19,21 @@ namespace py = pybind11;
 
 #ifdef NVTE_LIBTORCH_STABLE_ABI
 
-
-// Original headers
-
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGeneratorImpl.h>
-// #include <c10/macros/Macros.h>
-// #include <c10/util/Float8_e4m3fn.h>
-// #include <c10/util/Float8_e5m2.h>
 #include <torch/cuda.h>
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
-#include "c10/util/ArrayRef.h"
 
-// Replacements
 
 #include <torch/headeronly/util/Float8_e4m3fn.h>
 #include <torch/headeronly/util/Float8_e5m2.h>
 #include <torch/headeronly/macros/Macros.h>
 #include <torch/csrc/stable/accelerator.h>
 
-
-// To add.
-
 // #include <torch/csrc/stable/tensor.h>
-// #include <torch/csrc/stable/library.h>
 // #include <torch/csrc/stable/ops.h>
 // #include <torch/headeronly/core/ScalarType.h>
 
@@ -61,7 +49,6 @@ namespace py = pybind11;
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
-#include "c10/util/ArrayRef.h"
 
 #endif
 

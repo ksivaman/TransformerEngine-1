@@ -33,16 +33,15 @@ std::vector<size_t> getTensorShape(const at::Tensor& t) {
   return shape;
 }
 
-NVTEShape convertTorchShape(const c10::IntArrayRef torch_shape) {
+NVTEShape convertTorchShape(const at::Tensor& tensor) {
   NVTEShape ret;
-  ret.ndim = torch_shape.size();
+  ret.ndim = tensor.dim();
   constexpr int max_dimensions = sizeof(ret.data) / sizeof(size_t);
   NVTE_CHECK(ret.ndim < max_dimensions,
              "Torch tensor has too many dimensions. Max supported: ", max_dimensions, " and got ",
              ret.ndim, ".");
   for (size_t i = 0; i < ret.ndim; ++i) {
-    const auto& v = torch_shape[i];
-    ret.data[i] = static_cast<size_t>(v);
+    ret.data[i] = static_cast<size_t>(tensor.size(i));
   }
   return ret;
 }
@@ -249,11 +248,10 @@ std::vector<size_t> nvte_shape_to_vector(const NVTEShape& nvte_shape) {
 at::Tensor allocateSpace(const std::vector<size_t>& shape, const transformer_engine::DType type,
                          bool init_to_zeros) {
   std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-  c10::IntArrayRef ar_shape(shape_int64);
   if (init_to_zeros) {
-    return at::zeros(ar_shape, at::CUDA(GetATenDType(type)));
+    return at::zeros(shape_int64, at::CUDA(GetATenDType(type)));
   } else {
-    return at::empty(ar_shape, at::CUDA(GetATenDType(type)));
+    return at::empty(shape_int64, at::CUDA(GetATenDType(type)));
   }
 }
 

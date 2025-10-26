@@ -352,7 +352,7 @@ std::vector<py::object> fused_attn_bwd(
     case NVTE_QKV_Layout_Group::NVTE_3HD:
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 2, int64_t(3));
-      dQKV = torch::empty(c10::IntArrayRef(tmp_shape), options);
+      dQKV = torch::empty(tmp_shape, options);
       dQ = dQKV.index({"...", torch::indexing::Slice(0, 1, 1),
                        torch::indexing::Slice(0, torch::indexing::None, 1),
                        torch::indexing::Slice(0, torch::indexing::None, 1)})
@@ -369,7 +369,7 @@ std::vector<py::object> fused_attn_bwd(
     case NVTE_QKV_Layout_Group::NVTE_H3D:
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(3));
-      dQKV = torch::empty(c10::IntArrayRef(tmp_shape), options);
+      dQKV = torch::empty(tmp_shape, options);
       dQ = dQKV.index({"...", torch::indexing::Slice(0, 1, 1),
                        torch::indexing::Slice(0, torch::indexing::None, 1)})
                .squeeze(tmp_shape.size() - 2);
@@ -385,7 +385,7 @@ std::vector<py::object> fused_attn_bwd(
       dQ = torch::empty(tmp_shape, options);
       tmp_shape = std::vector<int64_t>{k_shape.begin(), k_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 2, int64_t(2));
-      dKV = torch::empty(c10::IntArrayRef(tmp_shape), options);
+      dKV = torch::empty(tmp_shape, options);
       dK = dKV.index({"...", torch::indexing::Slice(0, 1, 1),
                       torch::indexing::Slice(0, torch::indexing::None, 1),
                       torch::indexing::Slice(0, torch::indexing::None, 1)})
@@ -400,7 +400,7 @@ std::vector<py::object> fused_attn_bwd(
       dQ = torch::empty(tmp_shape, options);
       tmp_shape = std::vector<int64_t>{k_shape.begin(), k_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(2));
-      dKV = torch::empty(c10::IntArrayRef(tmp_shape), options);
+      dKV = torch::empty(tmp_shape, options);
       dK = dKV.index({"...", torch::indexing::Slice(0, 1, 1),
                       torch::indexing::Slice(0, torch::indexing::None, 1)})
                .squeeze(tmp_shape.size() - 2);

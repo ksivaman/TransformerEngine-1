@@ -466,7 +466,7 @@ std::vector<size_t> convertShape(const NVTEShape& shape);
 
 size_t roundup(const size_t value, const size_t multiple);
 
-NVTEShape convertTorchShape(const c10::IntArrayRef torch_shape);
+NVTEShape convertTorchShape(const at::Tensor& tensor);
 
 std::vector<size_t> convert_shape_back_from_fp4(const std::vector<size_t>& shape, bool transpose);
 
@@ -481,21 +481,6 @@ at::PhiloxCudaState init_philox_state(at::CUDAGeneratorImpl* gen, size_t elts_pe
 namespace std {
 template <typename T>
 string to_string(const vector<T>& vec) {
-  string ret = "[";
-  for (const auto& val : vec) {
-    ret += to_string(val) + ",";
-  }
-  if (ret.size() > 1) {
-    ret[ret.size() - 1] = ']';
-  } else {
-    ret += "]";
-  }
-  return ret;
-}
-
-// Torch shape -> string
-template <typename T>
-string to_string(const c10::ArrayRef<T>& vec) {
   string ret = "[";
   for (const auto& val : vec) {
     ret += to_string(val) + ",";

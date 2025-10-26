@@ -89,10 +89,13 @@ def setup_pytorch_extension(
     from torch.utils.cpp_extension import CppExtension
 
     torch_version = parse(torch.__version__)
-    torch_target_version_for_stable_libtorch_abi = parse("2.9.0.dev20250830") 
+    torch_target_version_for_stable_libtorch_abi = parse("2.9.0.dev20250830")
+
     if torch_version >= torch_target_version_for_stable_libtorch_abi:
-        cxx_flags.append("-DNVTE_LIBTORCH_STABLE_ABI")
-        # cxx_flags.append("-DTORCH_STABLE_ONLY")
+        if not bool(int(os.getenv("NVTE_DISABLE_LIBTORCH_STABLE_ABI", 0))):
+            print("Using libtorch stable wherever possible...")
+            cxx_flags.append("-DNVTE_LIBTORCH_STABLE_ABI")
+            # cxx_flags.append("-DTORCH_STABLE_ONLY")
 
     return CppExtension(
         name="transformer_engine_torch",
