@@ -21,13 +21,16 @@ namespace py = pybind11;
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <torch/csrc/stable/accelerator.h>
-#include <torch/cuda.h>
 #include <torch/headeronly/macros/Macros.h>
 #include <torch/headeronly/util/Float8_e4m3fn.h>
 #include <torch/headeronly/util/Float8_e5m2.h>
-#include <torch/torch.h>
 
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
+
+// Still needed for comm gemm overlap.
+#include <torch/torch.h>
+
+// Still needed for amax reduction group.
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
 
 // #include <torch/csrc/stable/tensor.h>

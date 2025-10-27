@@ -25,8 +25,7 @@ at::Tensor scaled_softmax_forward(at::Tensor input, float scale_factor) {
 
   // Output
   auto act_options = input.options().requires_grad(false);
-  auto softmax_results =
-      torch::empty({batches, attn_heads, query_seq_len, key_seq_len}, act_options);
+  auto softmax_results = at::empty({batches, attn_heads, query_seq_len, key_seq_len}, act_options);
 
   auto input_cu = makeTransformerEngineTensor(input);
   auto softmax_results_cu = makeTransformerEngineTensor(softmax_results);
@@ -86,8 +85,7 @@ at::Tensor scaled_masked_softmax_forward(at::Tensor input, at::Tensor mask, floa
   TORCH_CHECK(mask.size(3) == key_seq_len);
 
   auto act_options = input.options().requires_grad(false);
-  auto softmax_results =
-      torch::empty({batches, attn_heads, query_seq_len, key_seq_len}, act_options);
+  auto softmax_results = at::empty({batches, attn_heads, query_seq_len, key_seq_len}, act_options);
 
   auto input_cu = makeTransformerEngineTensor(input);
   auto mask_cu = makeTransformerEngineTensor(mask);
@@ -136,7 +134,7 @@ at::Tensor scaled_upper_triang_masked_softmax_forward(at::Tensor input, float sc
 
   // Output
   auto act_options = input.options().requires_grad(false);
-  auto softmax_results = torch::empty({attn_batches, seq_len, seq_len}, act_options);
+  auto softmax_results = at::empty({attn_batches, seq_len, seq_len}, act_options);
 
   auto input_cu = makeTransformerEngineTensor(input);
   auto softmax_results_cu = makeTransformerEngineTensor(softmax_results);
@@ -193,8 +191,7 @@ at::Tensor scaled_aligned_causal_masked_softmax_forward(at::Tensor input, float 
 
   // Output
   auto act_options = input.options().requires_grad(false);
-  auto softmax_results =
-      torch::empty({batches, attn_heads, query_seq_len, key_seq_len}, act_options);
+  auto softmax_results = at::empty({batches, attn_heads, query_seq_len, key_seq_len}, act_options);
 
   auto input_cu = makeTransformerEngineTensor(input);
   auto softmax_results_cu = makeTransformerEngineTensor(softmax_results);

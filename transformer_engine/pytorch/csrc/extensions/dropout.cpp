@@ -29,7 +29,7 @@ std::vector<py::object> dropout_fwd(const py::handle &input, float dropout_proba
     }
     const auto shape_uint64 = convertShape(input_nvte.shape());
     const std::vector<int64_t> shape_int64(shape_uint64.begin(), shape_uint64.end());
-    const auto opts = at::TensorOptions().dtype(dtype).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(dtype).device(at::kCUDA);
     out = at::empty(shape_int64, opts);
   }
   TensorWrapper out_nvte = makeTransformerEngineTensor(*out);

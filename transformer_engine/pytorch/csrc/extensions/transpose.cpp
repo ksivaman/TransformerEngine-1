@@ -33,7 +33,7 @@ at::Tensor fp8_transpose(at::Tensor input, DType otype, std::optional<at::Tensor
   if (output.has_value()) {
     out = *output;
   } else {
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     out = at::empty(transpose_shape_int64, opts);
   }
 

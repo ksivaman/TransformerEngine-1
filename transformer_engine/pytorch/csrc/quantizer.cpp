@@ -70,7 +70,7 @@ Float8Quantizer::Float8Quantizer(const py::handle& quantizer) : Quantizer(quanti
 std::pair<TensorWrapper, py::object> NoneQuantizer::create_tensor(const std::vector<size_t>& shape,
                                                                   DType dtype) const {
   const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-  const auto opts = at::TensorOptions().dtype(GetATenDType(dtype)).device(torch::kCUDA);
+  const auto opts = at::TensorOptions().dtype(GetATenDType(dtype)).device(at::kCUDA);
   return create_tensor(shape, dtype, at::empty(shape_int64, opts));
 }
 
@@ -102,14 +102,14 @@ void NoneQuantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
 void Float8Quantizer::set_quantization_params(TensorWrapper* tensor) const {
   tensor->set_scale(scale.data_ptr(), GetTransformerEngineDType(scale.scalar_type()),
                     getTensorShape(scale));
-  at::TensorOptions opts = opts.dtype(torch::kFloat32).device(torch::kCUDA);
+  at::TensorOptions opts = opts.dtype(at::kFloat).device(at::kCUDA);
   tensor->set_amax(amax.data_ptr(), GetTransformerEngineDType(amax.scalar_type()),
                    getTensorShape(amax));
 }
 
 std::pair<TensorWrapper, py::object> Float8Quantizer::create_tensor(
     const std::vector<size_t>& shape, DType dtype) const {
-  const auto opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+  const auto opts = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
   at::Tensor scale_inv = at::empty(std::vector<int64_t>{1}, opts);
   return create_tensor(shape, dtype, std::nullopt, std::nullopt, std::move(scale_inv));
 }
@@ -123,7 +123,7 @@ std::pair<TensorWrapper, py::object> Float8Quantizer::create_tensor(
   const bool with_data = rowwise_usage || nvte_is_non_tn_fp8_gemm_supported();
   if (with_data && !data) {
     const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     data = at::empty(shape_int64, opts);
   } else if (!with_data && data) {
     data.reset();
@@ -134,7 +134,7 @@ std::pair<TensorWrapper, py::object> Float8Quantizer::create_tensor(
   const bool with_transpose = columnwise_usage && !nvte_is_non_tn_fp8_gemm_supported();
   if (with_transpose && !transpose) {
     const auto transpose_shape = make_transpose_shape<int64_t>(shape);
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     transpose = at::empty(transpose_shape, opts);
   } else if (!with_transpose && transpose) {
     transpose.reset();
@@ -229,7 +229,7 @@ std::pair<TensorWrapper, py::object> Float8Quantizer::convert_and_update_tensor(
     tensor.attr("_data") = data_py;
   } else if (!has_data && need_data) {
     const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     data_tensor = at::empty(shape_int64, opts);
     data_py = py::cast(data_tensor);
     tensor.attr("_data") = data_py;
@@ -242,7 +242,7 @@ std::pair<TensorWrapper, py::object> Float8Quantizer::convert_and_update_tensor(
     tensor.attr("_transpose") = transpose_py;
   } else if (!has_transpose && need_transpose) {
     const auto transpose_shape = make_transpose_shape<int64_t>(shape);
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     transpose_tensor = at::empty(transpose_shape, opts);
     transpose_py = py::cast(transpose_tensor);
     tensor.attr("_transpose") = transpose_py;
@@ -313,7 +313,7 @@ void Float8CurrentScalingQuantizer::set_quantization_params(TensorWrapper* tenso
   // transfer amax and scale pointer from quantizer to output tensor (only as gpu buffer, no meaningful data in them)
   tensor->set_scale(scale.data_ptr(), GetTransformerEngineDType(scale.scalar_type()),
                     getTensorShape(scale));
-  at::TensorOptions opts = opts.dtype(torch::kFloat32).device(torch::kCUDA);
+  at::TensorOptions opts = opts.dtype(at::kFloat).device(at::kCUDA);
   tensor->set_amax(amax.data_ptr(), GetTransformerEngineDType(amax.scalar_type()),
                    getTensorShape(amax));
 }
@@ -327,7 +327,7 @@ std::pair<TensorWrapper, py::object> Float8CurrentScalingQuantizer::create_tenso
   const bool with_data = rowwise_usage || nvte_is_non_tn_fp8_gemm_supported();
   if (with_data) {
     const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     data_tensor = at::empty(shape_int64, opts);
   }
 
@@ -336,7 +336,7 @@ std::pair<TensorWrapper, py::object> Float8CurrentScalingQuantizer::create_tenso
   const bool with_transpose = columnwise_usage && !nvte_is_non_tn_fp8_gemm_supported();
   if (with_transpose) {
     const auto transpose_shape = make_transpose_shape<int64_t>(shape);
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     transpose_tensor = at::empty(transpose_shape, opts);
   }
 
@@ -344,7 +344,7 @@ std::pair<TensorWrapper, py::object> Float8CurrentScalingQuantizer::create_tenso
   at::Tensor scale_inv_tensor;
   {
     const std::vector<int64_t> scale_inv_shape = {1};
-    const auto opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
     scale_inv_tensor = at::empty(scale_inv_shape, opts);
   }
 
@@ -449,7 +449,7 @@ std::pair<TensorWrapper, py::object> Float8CurrentScalingQuantizer::convert_and_
     tensor.attr("_data") = data_py;
   } else if (!has_data && need_data) {
     const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     data_tensor = at::empty(shape_int64, opts);
     data_py = py::cast(data_tensor);
     tensor.attr("_data") = data_py;
@@ -462,7 +462,7 @@ std::pair<TensorWrapper, py::object> Float8CurrentScalingQuantizer::convert_and_
     tensor.attr("_transpose") = transpose_py;
   } else if (!has_transpose && need_transpose) {
     const auto transpose_shape = make_transpose_shape<int64_t>(shape);
-    const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+    const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
     transpose_tensor = at::empty(transpose_shape, opts);
     transpose_py = py::cast(transpose_tensor);
     tensor.attr("_transpose") = transpose_py;
@@ -568,8 +568,8 @@ std::pair<TensorWrapper, py::object> Float8BlockQuantizer::create_tensor(
   at::TensorOptions opts;
   at::TensorOptions scale_opts;
   at::Tensor data_rowwise, data_colwise, scale_inv_rowwise, scale_inv_colwise;
-  opts = opts.dtype(torch::kUInt8).device(torch::kCUDA);
-  scale_opts = scale_opts.dtype(torch::kFloat32).device(torch::kCUDA);
+  opts = opts.dtype(at::ScalarType::Byte).device(at::kCUDA);
+  scale_opts = scale_opts.dtype(at::kFloat).device(at::kCUDA);
 
   Float8BlockScaleTensorFormat data_format =
       (all_gather_usage ? Float8BlockScaleTensorFormat::COMPACT
@@ -668,8 +668,8 @@ std::pair<TensorWrapper, py::object> Float8BlockQuantizer::convert_and_update_te
   // Tensor options and dimensions
   at::TensorOptions opts;
   at::TensorOptions scale_opts;
-  opts = opts.dtype(torch::kUInt8).device(torch::kCUDA);
-  scale_opts = scale_opts.dtype(torch::kFloat32).device(torch::kCUDA);
+  opts = opts.dtype(at::ScalarType::Byte).device(at::kCUDA);
+  scale_opts = scale_opts.dtype(at::kFloat).device(at::kCUDA);
 
   auto get_columnwise_shape = [&columnwise_data](bool all_gather_usage) -> std::vector<size_t> {
     if (!columnwise_data) {
@@ -919,7 +919,7 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::create_tensor(const std::ve
   // Allocate tensors
   at::Tensor rowwise_data_tensor, rowwise_scale_inv_tensor;
   at::Tensor columnwise_data_tensor, columnwise_scale_inv_tensor;
-  const auto uint8_tensor_opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+  const auto uint8_tensor_opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
   if (rowwise_usage) {
     const std::vector<int64_t> scale_inv_shape_int64(rowwise_scale_inv_shape.begin(),
                                                      rowwise_scale_inv_shape.end());
@@ -1013,7 +1013,7 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::convert_and_update_tensor(
   if (rowwise_usage) {
     if (!rowwise_data) {
       const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       rowwise_data = at::empty(shape_int64, opts);
       tensor.attr("_rowwise_data") = *rowwise_data;
     }
@@ -1021,7 +1021,7 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::convert_and_update_tensor(
       const auto scale_inv_shape = get_scale_shape(shape, false);
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       rowwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_rowwise_scale_inv") = *rowwise_scale_inv;
     }
@@ -1040,7 +1040,7 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::convert_and_update_tensor(
   if (columnwise_usage) {
     if (!columnwise_data) {
       const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       columnwise_data = at::empty(shape_int64, opts);
       tensor.attr("_columnwise_data") = *columnwise_data;
     }
@@ -1048,7 +1048,7 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::convert_and_update_tensor(
       const auto scale_inv_shape = get_scale_shape(shape, true);
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       columnwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_columnwise_scale_inv") = *columnwise_scale_inv;
     }
@@ -1187,8 +1187,8 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::create_tensor(const std::ve
   // Allocate tensors
   at::Tensor rowwise_data_tensor, rowwise_scale_inv_tensor, amax_rowwise;
   at::Tensor columnwise_data_tensor, columnwise_scale_inv_tensor, amax_columnwise;
-  const auto bit8_tensor_opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
-  const auto bit32_tensor_opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+  const auto bit8_tensor_opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
+  const auto bit32_tensor_opts = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
   if (rowwise_usage) {
     const std::vector<int64_t> scale_inv_shape_int64(rowwise_scale_inv_shape.begin(),
                                                      rowwise_scale_inv_shape.end());
@@ -1336,7 +1336,7 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
   if (rowwise_usage) {
     if (!rowwise_data) {
       const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       rowwise_data = at::empty(convert_shape_for_fp4(shape_int64), opts);
       tensor.attr("_rowwise_data") = *rowwise_data;
     }
@@ -1344,12 +1344,12 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
       const auto scale_inv_shape = get_scale_shape(shape, false);
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       rowwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_rowwise_scale_inv") = *rowwise_scale_inv;
     }
     if (!amax_rowwise) {
-      const auto opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
       // hadamard amax kernel will zero out pointer with ZeroAmaxKernel
       // nvte_compute_amax_with_config will zero out the pointer if needed
       amax_rowwise = at::empty({1}, opts);
@@ -1377,7 +1377,7 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
       // and the transposed shape is [H, S, B], so divide last dim by 2 gives zero
       std::vector<int64_t> shape_int64_2d = {static_cast<int64_t>(flat_first_dim),
                                              static_cast<int64_t>(flat_last_dim)};
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       const auto transpose_shape_int64 = make_transpose_shape<int64_t>(shape_int64_2d);
       columnwise_data = at::empty(convert_shape_for_fp4(transpose_shape_int64), opts);
       tensor.attr("_columnwise_data") = *columnwise_data;
@@ -1386,12 +1386,12 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
       const auto scale_inv_shape = get_scale_shape(shape, true);
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
-      const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::ScalarType::Byte).device(at::kCUDA);
       columnwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_columnwise_scale_inv") = *columnwise_scale_inv;
     }
     if (!amax_columnwise) {
-      const auto opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+      const auto opts = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
       // hadamard amax kernel will zero out pointer with ZeroAmaxKernel
       // nvte_compute_amax_with_config will zero out the pointer if needed
       amax_columnwise = at::empty({1}, opts);
@@ -1468,8 +1468,8 @@ void NVFP4Quantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& ou
     auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
         std::nullopt, at::cuda::detail::getDefaultCUDAGenerator());
     at::PhiloxCudaState philox_args = init_philox_state(gen, rng_elts_per_thread);
-    auto opts = at::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
-    auto rng_state = torch::empty({2}, opts);
+    auto opts = at::TensorOptions().dtype(at::kLong).device(at::kCUDA);
+    auto rng_state = at::empty({2}, opts);
     philox_unpack(philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
     te_rng_state = makeTransformerEngineTensor(rng_state);
     quant_config.set_rng_state(te_rng_state.data());
@@ -1530,7 +1530,7 @@ void NVFP4Quantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& ou
       return at::from_blob(
           data_ptr, std::vector<int64_t>{1},
           [](void*) {},  // deleter doing nothing since it doesn't own the data
-          at::device(at::kCUDA).dtype(torch::kFloat32));
+          at::device(at::kCUDA).dtype(at::kFloat));
     };
     if (rowwise_usage) {
       amax_tensors.push_back(make_amax_tensor(out.get_amax().data_ptr));

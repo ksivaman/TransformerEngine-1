@@ -257,14 +257,14 @@ std::tuple<std::vector<py::object>, std::vector<TensorWrapper>> bulk_allocate_fp
 
     // Allocate full buffer
     auto buffer = std::make_shared<at::Tensor>(
-        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8)));
+        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte)));
 
     // Construct tensor views
     for (size_t i = 0; i < num_tensors; ++i) {
       rowwise_data_list.emplace_back(
-          make_torch_view(buffer, rowwise_data_shapes[i], data_offsets[i], torch::kUInt8));
+          make_torch_view(buffer, rowwise_data_shapes[i], data_offsets[i], at::ScalarType::Byte));
       rowwise_scale_list.emplace_back(
-          make_torch_view(buffer, rowwise_scale_shapes[i], scale_offsets[i], torch::kFloat32));
+          make_torch_view(buffer, rowwise_scale_shapes[i], scale_offsets[i], at::kFloat));
     }
   }
 
@@ -300,14 +300,14 @@ std::tuple<std::vector<py::object>, std::vector<TensorWrapper>> bulk_allocate_fp
 
     // Allocate full buffer
     auto buffer = std::make_shared<at::Tensor>(
-        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8)));
+        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte)));
 
     // Construct tensor views
     for (size_t i = 0; i < num_tensors; ++i) {
-      columnwise_data_list.emplace_back(
-          make_torch_view(buffer, columnwise_data_shapes[i], data_offsets[i], torch::kUInt8));
+      columnwise_data_list.emplace_back(make_torch_view(buffer, columnwise_data_shapes[i],
+                                                        data_offsets[i], at::ScalarType::Byte));
       columnwise_scale_list.emplace_back(
-          make_torch_view(buffer, columnwise_scale_shapes[i], scale_offsets[i], torch::kFloat32));
+          make_torch_view(buffer, columnwise_scale_shapes[i], scale_offsets[i], at::kFloat));
     }
   }
 
@@ -408,14 +408,14 @@ std::tuple<std::vector<py::object>, std::vector<TensorWrapper>> bulk_allocate_mx
 
     // Allocate full buffer
     auto buffer = std::make_shared<at::Tensor>(
-        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8)));
+        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte)));
 
     // Construct tensor views
     for (size_t i = 0; i < num_tensors; ++i) {
       rowwise_data_list.emplace_back(
-          make_torch_view(buffer, rowwise_data_shapes[i], data_offsets[i], torch::kUInt8));
+          make_torch_view(buffer, rowwise_data_shapes[i], data_offsets[i], at::ScalarType::Byte));
       rowwise_scale_list.emplace_back(
-          make_torch_view(buffer, rowwise_scale_shapes[i], scale_offsets[i], torch::kUInt8));
+          make_torch_view(buffer, rowwise_scale_shapes[i], scale_offsets[i], at::ScalarType::Byte));
     }
   }
 
@@ -448,14 +448,14 @@ std::tuple<std::vector<py::object>, std::vector<TensorWrapper>> bulk_allocate_mx
 
     // Allocate full buffer
     auto buffer = std::make_shared<at::Tensor>(
-        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8)));
+        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte)));
 
     // Construct tensor views
     for (size_t i = 0; i < num_tensors; ++i) {
-      columnwise_data_list.emplace_back(
-          make_torch_view(buffer, columnwise_data_shapes[i], data_offsets[i], torch::kUInt8));
-      columnwise_scale_list.emplace_back(
-          make_torch_view(buffer, columnwise_scale_shapes[i], scale_offsets[i], torch::kUInt8));
+      columnwise_data_list.emplace_back(make_torch_view(buffer, columnwise_data_shapes[i],
+                                                        data_offsets[i], at::ScalarType::Byte));
+      columnwise_scale_list.emplace_back(make_torch_view(buffer, columnwise_scale_shapes[i],
+                                                         scale_offsets[i], at::ScalarType::Byte));
     }
   }
 
@@ -574,16 +574,16 @@ std::tuple<std::vector<py::object>, std::vector<TensorWrapper>> bulk_allocate_nv
 
     // Allocate full buffer
     auto buffer = std::make_shared<at::Tensor>(
-        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8)));
+        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte)));
 
     // Construct tensor views
     for (size_t i = 0; i < num_tensors; ++i) {
       rowwise_data_list.emplace_back(make_torch_view(buffer, to_fp4_shape(rowwise_data_shapes[i]),
-                                                     data_offsets[i], torch::kUInt8));
+                                                     data_offsets[i], at::ScalarType::Byte));
       rowwise_scale_list.emplace_back(
-          make_torch_view(buffer, rowwise_scale_shapes[i], scale_offsets[i], torch::kUInt8));
+          make_torch_view(buffer, rowwise_scale_shapes[i], scale_offsets[i], at::ScalarType::Byte));
       amax_rowwise_list.emplace_back(
-          make_torch_view(buffer, std::vector<size_t>{1}, amax_offsets[i], torch::kUInt8));
+          make_torch_view(buffer, std::vector<size_t>{1}, amax_offsets[i], at::ScalarType::Byte));
     }
   }
 
@@ -629,16 +629,16 @@ std::tuple<std::vector<py::object>, std::vector<TensorWrapper>> bulk_allocate_nv
 
     // Allocate full buffer
     auto buffer = std::make_shared<at::Tensor>(
-        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8)));
+        at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte)));
 
     // Construct tensor views
     for (size_t i = 0; i < num_tensors; ++i) {
       columnwise_data_list.emplace_back(make_torch_view(
-          buffer, to_fp4_shape(columnwise_data_shapes[i]), data_offsets[i], torch::kUInt8));
-      columnwise_scale_list.emplace_back(
-          make_torch_view(buffer, columnwise_scale_shapes[i], scale_offsets[i], torch::kUInt8));
+          buffer, to_fp4_shape(columnwise_data_shapes[i]), data_offsets[i], at::ScalarType::Byte));
+      columnwise_scale_list.emplace_back(make_torch_view(buffer, columnwise_scale_shapes[i],
+                                                         scale_offsets[i], at::ScalarType::Byte));
       amax_columnwise_list.emplace_back(
-          make_torch_view(buffer, std::vector<size_t>{1}, amax_offsets[i], torch::kUInt8));
+          make_torch_view(buffer, std::vector<size_t>{1}, amax_offsets[i], at::ScalarType::Byte));
     }
   }
 

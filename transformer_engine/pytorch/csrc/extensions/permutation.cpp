@@ -17,20 +17,18 @@ std::tuple<at::Tensor, at::Tensor, std::vector<at::Tensor>> moe_permute_fwd(
 
   // Initialize the workspace on the first run
   if (workspace.empty()) {
-    auto options =
-        torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA).requires_grad(false);
+    auto options = at::TensorOptions().dtype(at::kInt).device(at::kCUDA).requires_grad(false);
 
-    at::Tensor sorted_indices = torch::empty(max_expanded_token_num, options);
+    at::Tensor sorted_indices = at::empty(max_expanded_token_num, options);
     at::Tensor row_id = torch::range(0, max_expanded_token_num - 1, 1, options);
-    at::Tensor sorted_row_id =
-        torch::empty(max_expanded_token_num,
-                     torch::dtype(torch::kInt32).device(torch::kCUDA).requires_grad(false));
+    at::Tensor sorted_row_id = at::empty(
+        max_expanded_token_num, torch::dtype(at::kInt).device(at::kCUDA).requires_grad(false));
 
     size_t temp_storage_bytes = 0;
     nvte_device_radix_sort_pairs(nullptr, &temp_storage_bytes, nullptr, nullptr, nullptr, nullptr,
                                  max_expanded_token_num);
-    at::Tensor temp_storage = torch::empty(
-        temp_storage_bytes, torch::dtype(torch::kInt8).device(torch::kCUDA).requires_grad(false));
+    at::Tensor temp_storage = at::empty(
+        temp_storage_bytes, torch::dtype(torch::kInt8).device(at::kCUDA).requires_grad(false));
 
     workspace.push_back(sorted_indices);
     workspace.push_back(row_id);
@@ -54,10 +52,10 @@ std::tuple<at::Tensor, at::Tensor, std::vector<at::Tensor>> moe_permute_fwd(
   // Output buffer alloc
   num_out_tokens = (num_out_tokens > 0) ? num_out_tokens : num_tokens * topK;
   at::Tensor permuted_output =
-      torch::empty({num_out_tokens, num_cols},
-                   torch::dtype(input.scalar_type()).device(torch::kCUDA).requires_grad(false));
-  at::Tensor row_id_map = torch::empty(
-      {num_tokens * topK}, torch::dtype(torch::kInt32).device(torch::kCUDA).requires_grad(false));
+      at::empty({num_out_tokens, num_cols},
+                torch::dtype(input.scalar_type()).device(at::kCUDA).requires_grad(false));
+  at::Tensor row_id_map =
+      at::empty({num_tokens * topK}, torch::dtype(at::kInt).device(at::kCUDA).requires_grad(false));
 
   auto stream = get_current_cuda_stream();
 
@@ -93,8 +91,8 @@ at::Tensor moe_unpermute_fwd(at::Tensor input, const DType dtype, at::Tensor row
 
   // Output buffer alloc
   at::Tensor unpermuted_output =
-      torch::empty({num_tokens, num_cols},
-                   torch::dtype(input.scalar_type()).device(torch::kCUDA).requires_grad(false));
+      at::empty({num_tokens, num_cols},
+                torch::dtype(input.scalar_type()).device(at::kCUDA).requires_grad(false));
 
   auto stream = get_current_cuda_stream();
 
@@ -125,10 +123,10 @@ std::tuple<at::Tensor, at::Tensor> moe_unpermute_bwd(at::Tensor input_bwd, at::T
 
   // Output buffer alloc
   at::Tensor act_grad =
-      torch::empty({input_fwd.size(0), num_cols},
-                   torch::dtype(input_bwd.scalar_type()).device(torch::kCUDA).requires_grad(false));
-  at::Tensor prob_grad = torch::empty(
-      {num_tokens, topK}, torch::dtype(torch::kFloat32).device(torch::kCUDA).requires_grad(false));
+      at::empty({input_fwd.size(0), num_cols},
+                torch::dtype(input_bwd.scalar_type()).device(at::kCUDA).requires_grad(false));
+  at::Tensor prob_grad = at::empty({num_tokens, topK},
+                                   torch::dtype(at::kFloat).device(at::kCUDA).requires_grad(false));
 
   auto stream = get_current_cuda_stream();
 

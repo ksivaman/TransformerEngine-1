@@ -356,11 +356,11 @@ inline size_t typeToNumBits(transformer_engine::DType t) {
 inline at::ScalarType GetATenDType(transformer_engine::DType t) {
   switch (t) {
     case transformer_engine::DType::kInt16:
-      return torch::kInt16;
+      return at::kShort;
     case transformer_engine::DType::kInt32:
-      return torch::kInt32;
+      return at::kInt;
     case transformer_engine::DType::kInt64:
-      return torch::kInt64;
+      return at::kLong;
     case transformer_engine::DType::kFloat32:
       return at::kFloat;
     case transformer_engine::DType::kFloat16:
@@ -392,13 +392,13 @@ inline transformer_engine::DType GetTransformerEngineDType(at::ScalarType t) {
       return transformer_engine::DType::kBFloat16;
     case at::kBool:
       return transformer_engine::DType::kByte;
-    case torch::kByte:
+    case at::kByte:
       return transformer_engine::DType::kByte;
-    case torch::kInt16:
+    case at::kShort:
       return transformer_engine::DType::kInt16;
-    case torch::kInt32:
+    case at::kInt:
       return transformer_engine::DType::kInt32;
-    case torch::kInt64:
+    case at::kLong:
       return transformer_engine::DType::kInt64;
     default:
       std::cout << "Type: " << static_cast<int>(t) << std::endl;

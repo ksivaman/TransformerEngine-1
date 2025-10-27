@@ -51,7 +51,7 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
   NVTE_CHECK(input_shape.size() >= 2, "Wrong ndims for swizzle input shape.");
 
   // Allocate memory for swizzled output.
-  auto options = at::TensorOptions().dtype(torch::kByte).device(torch::kCUDA);
+  auto options = at::TensorOptions().dtype(at::kByte).device(at::kCUDA);
   std::vector<int64_t> scale_inv_shape_int;
   for (size_t i = 0; i < scale_inv_shape.size(); ++i) {
     scale_inv_shape_int.push_back(static_cast<int64_t>(scale_inv_shape[i]));
@@ -141,7 +141,8 @@ std::optional<at::Tensor> multi_tensor_swizzle_scaling_factors(
   }
 
   // Allocate full buffer
-  auto buffer = at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(torch::kUInt8));
+  auto buffer =
+      at::empty({(int64_t)buffer_size}, at::device(at::kCUDA).dtype(at::ScalarType::Byte));
 
   const auto input_dtype =
       (nvfp4) ? transformer_engine::DType::kFloat4E2M1 : transformer_engine::DType::kFloat8E4M3;
@@ -243,7 +244,7 @@ at::Tensor convert_block_scaling_to_mxfp8_tensor(transformer_engine::TensorWrapp
   const size_t swizzled_scale_inv_first_dim = DIVUP<size_t>(data_flat_first_dim, 128) * 128;
   const size_t swizzled_scale_inv_last_dim = DIVUP<size_t>(data_flat_last_dim, 128) * 4;
   // Allocate memory for swizzled mxfp8 scaling factors
-  const auto options = at::TensorOptions().dtype(torch::kByte).device(torch::kCUDA);
+  const auto options = at::TensorOptions().dtype(at::kByte).device(at::kCUDA);
   at::Tensor swizzled_scale_inv = at::empty(
       std::vector<int64_t>{swizzled_scale_inv_first_dim, swizzled_scale_inv_last_dim}, options);
   // Set rowwise scaling factors on output

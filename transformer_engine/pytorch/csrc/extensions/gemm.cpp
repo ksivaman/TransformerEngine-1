@@ -170,8 +170,7 @@ std::vector<py::object> gemm(py::handle A, bool transa, py::handle B, bool trans
   MaybeTensor bias_grad = std::nullopt;
   if (bias.has_value()) {
     if (grad) {
-      auto opts =
-          torch::TensorOptions().dtype(GetATenDType(out_tensor.dtype())).device(torch::kCUDA);
+      auto opts = at::TensorOptions().dtype(GetATenDType(out_tensor.dtype())).device(at::kCUDA);
       bias_grad = at::empty({static_cast<int64_t>(B_shape.data[B_shape.ndim - 1])}, opts);
       bias_tensor = makeTransformerEngineTensor(*bias_grad);
     } else {
@@ -188,7 +187,7 @@ std::vector<py::object> gemm(py::handle A, bool transa, py::handle B, bool trans
   if (gelu) {
     if (!grad) {
       auto dtype = GetATenDType(gelu_type);
-      auto opts = torch::TensorOptions().dtype(dtype).device(torch::kCUDA);
+      auto opts = at::TensorOptions().dtype(dtype).device(at::kCUDA);
       std::vector<int64_t> torch_shape;
       for (auto v : D_shape) {
         torch_shape.push_back(v);
@@ -424,7 +423,7 @@ std::optional<std::vector<at::Tensor>> te_general_grouped_gemm(
       }
     }
     auto dtype = GetATenDType(D_type);
-    auto opts = torch::TensorOptions().dtype(dtype).device(torch::kCUDA);
+    auto opts = at::TensorOptions().dtype(dtype).device(at::kCUDA);
     if (single_output) {
       if (output_data_ptr == nullptr) {
         out_tensor = at::empty(D_shape, opts);
@@ -442,7 +441,7 @@ std::optional<std::vector<at::Tensor>> te_general_grouped_gemm(
       D_vectors.emplace_back(out_tensor);
     } else {
       if (D == std::nullopt) {
-        auto opts = torch::TensorOptions().dtype(dtype).device(torch::kCUDA);
+        auto opts = at::TensorOptions().dtype(dtype).device(at::kCUDA);
         out_tensor = at::empty(D_shape, opts);
         D_vectors.emplace_back(out_tensor);
       } else {

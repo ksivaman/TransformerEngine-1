@@ -209,8 +209,8 @@ std::vector<py::object> fused_attn_fwd(
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
       rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
   at::PhiloxCudaState philox_args = init_philox_state(gen, rng_elts_per_thread);
-  auto options = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
-  auto rng_state = torch::empty({2}, options);
+  auto options = at::TensorOptions().dtype(at::kLong).device(at::kCUDA);
+  auto rng_state = at::empty({2}, options);
   philox_unpack(philox_args, static_cast<int64_t *>(rng_state.data_ptr()));
   auto te_rng_state = makeTransformerEngineTensor(rng_state);
 
@@ -229,8 +229,7 @@ std::vector<py::object> fused_attn_fwd(
         te_cu_seqlens_q_padded.data(), te_cu_seqlens_kv_padded.data(), te_page_table_k.data(),
         te_page_table_v.data(), te_rng_state.data(), max_seqlen_q, max_seqlen_kv, is_training,
         return_max_logit, attn_scale, p_dropout, qkv_layout, bias_type, attn_mask_type,
-        softmax_type, window_size[0], window_size[1], workspace.data(),
-        get_current_cuda_stream());
+        softmax_type, window_size[0], window_size[1], workspace.data(), get_current_cuda_stream());
   });
 
   // allocate memory for workspace and auxiliary output tensors
@@ -289,8 +288,7 @@ std::vector<py::object> fused_attn_fwd(
         te_cu_seqlens_q_padded.data(), te_cu_seqlens_kv_padded.data(), te_page_table_k.data(),
         te_page_table_v.data(), te_rng_state.data(), max_seqlen_q, max_seqlen_kv, is_training,
         return_max_logit, attn_scale, p_dropout, qkv_layout, bias_type, attn_mask_type,
-        softmax_type, window_size[0], window_size[1], workspace.data(),
-        get_current_cuda_stream());
+        softmax_type, window_size[0], window_size[1], workspace.data(), get_current_cuda_stream());
   });
 
   // destroy tensor wrappers, but not allocated memory
@@ -344,9 +342,9 @@ std::vector<py::object> fused_attn_bwd(
   at::Tensor dQ, dK, dV, dQKV, dKV;
   NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
   std::vector<int64_t> tmp_shape;
-  auto options = torch::TensorOptions().dtype(GetATenDType(dqkv_type)).device(torch::kCUDA);
+  auto options = at::TensorOptions().dtype(GetATenDType(dqkv_type)).device(at::kCUDA);
   if (dqkv_type == DType::kFloat8E4M3 || dqkv_type == DType::kFloat8E5M2) {
-    options = options.dtype(torch::kUInt8);
+    options = options.dtype(at::ScalarType::Byte);
   }
   if (detail::IsFloat8CurrentScalingQuantizers(dqkv_quantizer.ptr())) {
     options = options.dtype(fake_dtype);
@@ -356,7 +354,7 @@ std::vector<py::object> fused_attn_bwd(
     case NVTE_QKV_Layout_Group::NVTE_3HD:
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 2, int64_t(3));
-      dQKV = torch::empty(tmp_shape, options);
+      dQKV = at::empty(tmp_shape, options);
       dQ = dQKV.narrow(dQKV.dim() - 3, 0, 1).squeeze(tmp_shape.size() - 3);
       dK = dQKV.narrow(dQKV.dim() - 3, 1, 1).squeeze(tmp_shape.size() - 3);
       dV = dQKV.narrow(dQKV.dim() - 3, 2, dQKV.size(dQKV.dim() - 3) - 2)
@@ -365,7 +363,7 @@ std::vector<py::object> fused_attn_bwd(
     case NVTE_QKV_Layout_Group::NVTE_H3D:
       tmp_shape = std::vector<int64_t>{q_shape.begin(), q_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(3));
-      dQKV = torch::empty(tmp_shape, options);
+      dQKV = at::empty(tmp_shape, options);
       dQ = dQKV.narrow(dQKV.dim() - 2, 0, 1).squeeze(tmp_shape.size() - 2);
       dK = dQKV.narrow(dQKV.dim() - 2, 1, 1).squeeze(tmp_shape.size() - 2);
       dV = dQKV.narrow(dQKV.dim() - 2, 2, dQKV.size(dQKV.dim() - 2) - 2)
@@ -373,29 +371,29 @@ std::vector<py::object> fused_attn_bwd(
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_2HD:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
-      dQ = torch::empty(tmp_shape, options);
+      dQ = at::empty(tmp_shape, options);
       tmp_shape = std::vector<int64_t>{k_shape.begin(), k_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 2, int64_t(2));
-      dKV = torch::empty(tmp_shape, options);
+      dKV = at::empty(tmp_shape, options);
       dK = dKV.narrow(dKV.dim() - 3, 0, 1).squeeze(tmp_shape.size() - 3);
       dV = dKV.narrow(dKV.dim() - 3, 1, dKV.size(dKV.dim() - 3) - 1).squeeze(tmp_shape.size() - 3);
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_H2D:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
-      dQ = torch::empty(tmp_shape, options);
+      dQ = at::empty(tmp_shape, options);
       tmp_shape = std::vector<int64_t>{k_shape.begin(), k_shape.end()};
       tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(2));
-      dKV = torch::empty(tmp_shape, options);
+      dKV = at::empty(tmp_shape, options);
       dK = dKV.narrow(dKV.dim() - 2, 0, 1).squeeze(tmp_shape.size() - 2);
       dV = dKV.narrow(dKV.dim() - 2, 1, dKV.size(dKV.dim() - 2) - 1).squeeze(tmp_shape.size() - 2);
       break;
     case NVTE_QKV_Layout_Group::NVTE_HD_HD_HD:
       tmp_shape = std::vector<int64_t>(q_shape.begin(), q_shape.end());
-      dQ = torch::empty(tmp_shape, options);
+      dQ = at::empty(tmp_shape, options);
       tmp_shape = std::vector<int64_t>(k_shape.begin(), k_shape.end());
-      dK = torch::empty(tmp_shape, options);
+      dK = at::empty(tmp_shape, options);
       tmp_shape = std::vector<int64_t>(v_shape.begin(), v_shape.end());
-      dV = torch::empty(tmp_shape, options);
+      dV = at::empty(tmp_shape, options);
       break;
     default:
       NVTE_ERROR("QKV layout not supported!");
@@ -476,12 +474,12 @@ std::vector<py::object> fused_attn_bwd(
   if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI)) {
     if (nvte_aux_tensor_pack.size >= 2) {
       std::vector<int64_t> bias_shape(Aux_CTX_Tensors[nvte_aux_tensor_pack.size - 1].sizes().vec());
-      dBias = torch::empty(bias_shape, options);
+      dBias = at::empty(bias_shape, options);
       te_dBias = makeTransformerEngineTensor(dBias);
     } else {
-      dBias = torch::empty({1, static_cast<int64_t>(h_q), static_cast<int64_t>(max_seqlen_q),
-                            static_cast<int64_t>(max_seqlen_kv)},
-                           options);
+      dBias = at::empty({1, static_cast<int64_t>(h_q), static_cast<int64_t>(max_seqlen_q),
+                         static_cast<int64_t>(max_seqlen_kv)},
+                        options);
       te_dBias = makeTransformerEngineTensor(dBias);
     }
     if (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD) {
@@ -493,8 +491,8 @@ std::vector<py::object> fused_attn_bwd(
   at::Tensor dSoftmaxOffset;
   TensorWrapper te_dSoftmaxOffset;
   if (softmax_type != NVTE_VANILLA_SOFTMAX) {
-    options = torch::TensorOptions().dtype(at::kFloat).device(torch::kCUDA);
-    dSoftmaxOffset = torch::empty({1, static_cast<int64_t>(h_q), 1, 1}, options);
+    options = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    dSoftmaxOffset = at::empty({1, static_cast<int64_t>(h_q), 1, 1}, options);
     te_dSoftmaxOffset = makeTransformerEngineTensor(dSoftmaxOffset);
   }
 

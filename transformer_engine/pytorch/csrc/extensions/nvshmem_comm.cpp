@@ -33,7 +33,7 @@ void init_nvshmem_backend(c10d::ProcessGroup *process_group) {
   auto datatensor =
       torch::from_blob(reinterpret_cast<void *>(&id),
                        {static_cast<int64_t>(sizeof(nvshmemx_uniqueid_t) / sizeof(uint8_t))},
-                       at::device(torch::kCPU).dtype(torch::kUInt8));
+                       at::device(at::kCPU).dtype(at::ScalarType::Byte));
   auto datatmp = (backend_is_nccl) ? datatensor.cuda() : datatensor;
 
   c10d::BroadcastOptions bcast_opts;
