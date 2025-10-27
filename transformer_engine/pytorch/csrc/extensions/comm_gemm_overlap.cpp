@@ -86,24 +86,23 @@ void CommOverlapHelper::ub_allgather(void *globaldata, size_t globalbytes, void 
   NVTE_CHECK(initialized, "Internal TE error: tex.CommOverlapHelper() is not initialized ",
              "with valid process groups!");
 
-  auto localtensor =
-      torch::from_blob(localdata, {static_cast<int64_t>(localbytes / sizeof(uint8_t))},
-                       at::device(at::kCPU).dtype(at::ScalarType::Byte));
+  auto localtensor = at::from_blob(localdata, {static_cast<int64_t>(localbytes / sizeof(uint8_t))},
+                                   at::device(at::kCPU).dtype(at::ScalarType::Byte));
   auto localtmp = (backend_is_nccl) ? localtensor.cuda() : localtensor;
   auto globaltensor =
-      torch::from_blob(globaldata, {static_cast<int64_t>(globalbytes / sizeof(uint8_t))},
-                       at::device(at::kCPU).dtype(at::ScalarType::Byte));
+      at::from_blob(globaldata, {static_cast<int64_t>(globalbytes / sizeof(uint8_t))},
+                    at::device(at::kCPU).dtype(at::ScalarType::Byte));
   auto globaltmp = (backend_is_nccl) ? globaltensor.cuda() : globaltensor;
 
-  std::vector<std::vector<torch::Tensor>> globalchunks = {globaltmp.chunk(pgs[group]->getSize())};
-  std::vector<torch::Tensor> localchunk = {localtmp};
+  std::vector<std::vector<at::Tensor>> globalchunks = {globaltmp.chunk(pgs[group]->getSize())};
+  std::vector<at::Tensor> localchunk = {localtmp};
   auto work = pgs[group]->allgather(globalchunks, localchunk);
   work->wait();
 
   if (backend_is_nccl) {
     globaltensor.copy_(globaltmp.cpu());
-    globaltmp = torch::Tensor();
-    localtmp = torch::Tensor();
+    globaltmp = at::Tensor();
+    localtmp = at::Tensor();
   }
 #else
   NVTE_ERROR("Internal TE error: CommOverlapHelper::ub_allgather is a no-op when TE is compiled ",
@@ -212,7 +211,7 @@ at::Tensor CommOverlap::get_buffer(bool local_chunk, std::optional<std::vector<i
 
   // Construct PyTorch tensor
   const auto dtype = transformer_engine::pytorch::GetATenDType(_ubuf.dtype());
-  return torch::from_blob(ubuf_ptr, *shape, at::dtype(dtype).device(at::kCUDA));
+  return at::from_blob(ubuf_ptr, *shape, at::dtype(dtype).device(at::kCUDA));
 }
 
 std::pair<at::Stream, at::Stream> CommOverlap::get_communication_stream() {
@@ -302,7 +301,7 @@ at::Tensor CommOverlapP2P::get_buffer(bool local_chunk, std::optional<std::vecto
 
   // Construct PyTorch tensor
   const auto dtype = transformer_engine::pytorch::GetATenDType(_ubuf.dtype());
-  return torch::from_blob(ubuf_ptr, *shape, at::dtype(dtype).device(at::kCUDA));
+  return at::from_blob(ubuf_ptr, *shape, at::dtype(dtype).device(at::kCUDA));
 }
 
 std::pair<at::Stream, at::Stream> CommOverlapP2P::get_communication_stream() {

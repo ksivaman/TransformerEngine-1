@@ -597,7 +597,7 @@ at::Tensor thd_read_half_tensor(const at::Tensor &tensor, const at::Tensor &cu_s
 
   int num_heads = tensor.size(seq_dim + 1);
   int dim_per_head = tensor.size(seq_dim + 2);
-  int hidden_size_in_bytes = num_heads * dim_per_head * c10::elementSize(tensor.scalar_type());
+  int hidden_size_in_bytes = num_heads * dim_per_head * at::elementSize(tensor.scalar_type());
 
   // For 128-bits load/store
   NVTE_CHECK(hidden_size_in_bytes % 16 == 0);

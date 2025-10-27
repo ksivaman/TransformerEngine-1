@@ -22,15 +22,15 @@ namespace transformer_engine::pytorch {
  **************************************************************************************************/
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_topk_with_score_function_fwd(
-    at::Tensor logits, int topk, bool use_pre_softmax, c10::optional<int> num_groups,
-    c10::optional<int> group_topk, c10::optional<float> scaling_factor, std::string score_function,
-    c10::optional<at::Tensor> expert_bias);
+    at::Tensor logits, int topk, bool use_pre_softmax, std::optional<int> num_groups,
+    std::optional<int> group_topk, std::optional<float> scaling_factor, std::string score_function,
+    std::optional<at::Tensor> expert_bias);
 
 at::Tensor fused_topk_with_score_function_bwd(int num_tokens, int num_experts,
                                               at::Tensor routing_map,
                                               at::Tensor intermediate_output, at::Tensor grad_probs,
                                               int topk, bool use_pre_softmax,
-                                              c10::optional<float> scaling_factor,
+                                              std::optional<float> scaling_factor,
                                               std::string score_function);
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_score_for_moe_aux_loss_fwd(
@@ -467,7 +467,7 @@ void fused_multi_row_unpadding(at::Tensor input, at::Tensor output,
 
 void init_nvshmem_backend(c10d::ProcessGroup *process_group);
 
-at::Tensor create_nvshmem_tensor(const std::vector<int64_t> &shape, c10::ScalarType dtype);
+at::Tensor create_nvshmem_tensor(const std::vector<int64_t> &shape, at::ScalarType dtype);
 
 void nvshmem_send_on_current_stream(at::Tensor src, at::Tensor dst, int peer, at::Tensor signal);
 

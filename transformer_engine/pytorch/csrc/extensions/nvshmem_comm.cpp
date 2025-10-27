@@ -31,20 +31,20 @@ void init_nvshmem_backend(c10d::ProcessGroup *process_group) {
   auto backend_is_nccl = (process_group->getBackendType() == c10d::ProcessGroup::BackendType::NCCL);
   NVTE_CHECK(backend_is_nccl, "Currently only support NCCL boostrap for NVSHMEM");
   auto datatensor =
-      torch::from_blob(reinterpret_cast<void *>(&id),
-                       {static_cast<int64_t>(sizeof(nvshmemx_uniqueid_t) / sizeof(uint8_t))},
-                       at::device(at::kCPU).dtype(at::ScalarType::Byte));
+      at::from_blob(reinterpret_cast<void *>(&id),
+                    {static_cast<int64_t>(sizeof(nvshmemx_uniqueid_t) / sizeof(uint8_t))},
+                    at::device(at::kCPU).dtype(at::ScalarType::Byte));
   auto datatmp = (backend_is_nccl) ? datatensor.cuda() : datatensor;
 
   c10d::BroadcastOptions bcast_opts;
   bcast_opts.rootRank = 0;
-  std::vector<torch::Tensor> datachunk = {datatmp};
+  std::vector<at::Tensor> datachunk = {datatmp};
   auto work = process_group->broadcast(datachunk, bcast_opts);
   work->wait();
 
   if (backend_is_nccl) {
     datatensor.copy_(datatmp.cpu());
-    datatmp = torch::Tensor();
+    datatmp = at::Tensor();
   }
 
   nvshmemx_set_attr_uniqueid_args(my_rank, num_ranks, &id, &attr);
@@ -60,7 +60,7 @@ void init_nvshmem_backend(c10d::ProcessGroup *process_group) {
 #endif
 }
 
-void nvshmem_wait_on_current_stream(torch::Tensor signal, const std::string &wait_kind) {
+void nvshmem_wait_on_current_stream(at::Tensor signal, const std::string &wait_kind) {
 #ifdef NVTE_ENABLE_NVSHMEM
   uint64_t *sig_addr = reinterpret_cast<uint64_t *>(signal.data_ptr());
   cudaStream_t cur_stream = get_current_cuda_stream();
@@ -85,12 +85,12 @@ void nvshmem_wait_on_current_stream(torch::Tensor signal, const std::string &wai
 #endif
 }
 
-torch::Tensor create_nvshmem_tensor(const std::vector<int64_t> &shape, c10::ScalarType dtype) {
+at::Tensor create_nvshmem_tensor(const std::vector<int64_t> &shape, at::ScalarType dtype) {
 #ifdef NVTE_ENABLE_NVSHMEM
   auto option_gpu =
-      at::TensorOptions().dtype(dtype).device(at::kCUDA).device_index(c10::cuda::current_device());
-  auto size = torch::elementSize(dtype) *
-              std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<>());
+      at::TensorOptions().dtype(dtype).device(at::kCUDA).device_index(at::cuda::current_device());
+  auto size =
+      at::elementSize(dtype) * std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<>());
   return at::from_blob(
       nvshmem_malloc(size), shape, [](void *ptr) { nvshmem_free(ptr); }, option_gpu);
 #else
@@ -99,8 +99,7 @@ torch::Tensor create_nvshmem_tensor(const std::vector<int64_t> &shape, c10::Scal
 #endif
 }
 
-void nvshmem_send_on_current_stream(torch::Tensor src, torch::Tensor dst, int peer,
-                                    torch::Tensor signal) {
+void nvshmem_send_on_current_stream(at::Tensor src, at::Tensor dst, int peer, at::Tensor signal) {
 #ifdef NVTE_ENABLE_NVSHMEM
   void *src_ptr = reinterpret_cast<void *>(src.data_ptr());
   void *dst_ptr = reinterpret_cast<void *>(dst.data_ptr());

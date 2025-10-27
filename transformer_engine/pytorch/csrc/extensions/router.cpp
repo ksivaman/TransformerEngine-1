@@ -12,9 +12,9 @@ namespace transformer_engine::pytorch {
 static std::map<std::string, int> score_function_map = {{"sigmoid", 0}, {"softmax", 1}};
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_topk_with_score_function_fwd(
-    at::Tensor logits, int topk, bool use_pre_softmax, c10::optional<int> num_groups,
-    c10::optional<int> group_topk, c10::optional<float> scaling_factor, std::string score_function,
-    c10::optional<at::Tensor> expert_bias) {
+    at::Tensor logits, int topk, bool use_pre_softmax, std::optional<int> num_groups,
+    std::optional<int> group_topk, std::optional<float> scaling_factor, std::string score_function,
+    std::optional<at::Tensor> expert_bias) {
   int num_tokens = logits.size(0);
   int num_experts = logits.size(1);
   // Check if the input is valid
@@ -68,7 +68,7 @@ at::Tensor fused_topk_with_score_function_bwd(int num_tokens, int num_experts,
                                               at::Tensor routing_map,
                                               at::Tensor intermediate_output, at::Tensor grad_probs,
                                               int topk, bool use_pre_softmax,
-                                              c10::optional<float> scaling_factor,
+                                              std::optional<float> scaling_factor,
                                               std::string score_function) {
   // Get the value of the parameters
   auto scaling_factor_value = scaling_factor.has_value() ? scaling_factor.value() : 1.0f;

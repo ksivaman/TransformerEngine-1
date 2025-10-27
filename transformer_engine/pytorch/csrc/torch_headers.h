@@ -17,9 +17,6 @@ namespace py = pybind11;
 
 #ifdef NVTE_LIBTORCH_STABLE_ABI
 
-#include <ATen/ATen.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <torch/csrc/stable/accelerator.h>
 #include <torch/headeronly/macros/Macros.h>
 #include <torch/headeronly/util/Float8_e4m3fn.h>
@@ -27,11 +24,17 @@ namespace py = pybind11;
 
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
 
-// Still needed for comm gemm overlap.
-#include <torch/torch.h>
+// Comm gemm overlap.
+#include <torch/custom_class.h>
 
-// Still needed for amax reduction group.
+// Amax reduction group.
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
+
+// Cuda graphs, comm gemm overlap, various pytorch ops.
+// Hopefully we can eventually migrate fully and build with TORCH_STABLE_ONLY.
+#include <ATen/ATen.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAGeneratorImpl.h>
 
 // #include <torch/csrc/stable/tensor.h>
 // #include <torch/csrc/stable/ops.h>
