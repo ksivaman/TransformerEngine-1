@@ -759,9 +759,7 @@ class GroupedLinear(TransformerEngineBaseModule):
         ), "GroupedLinear doesn't support input tensor in FP8."
         assert len(m_splits) == self.num_gemms, "Number of splits should match number of GEMMs."
 
-        with torch.cuda.device(
-            getattr(self, list(self.named_parameters())[0][0]).device
-        ), self.prepare_forward(inp, num_gemms=self.num_gemms) as inp:
+        with self.prepare_forward(inp, num_gemms=self.num_gemms) as inp:
             weight_tensors = self._get_weight_tensors()
             bias_tensors = [getattr(self, f"bias{i}") for i in range(self.num_gemms)]
 
