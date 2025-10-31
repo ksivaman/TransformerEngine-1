@@ -40,6 +40,7 @@ from ..utils import (
     nvtx_range_push,
     requires_grad,
     needs_quantized_gemm,
+    get_nvtx_range_context,
 )
 from ..distributed import (
     set_tensor_model_parallel_attributes,
@@ -531,7 +532,7 @@ class _LayerNormLinear(torch.autograd.Function):
         if ctx.ub_name is not None:
             nvtx_label = f"{nvtx_label}.{ctx.ub_name}"
 
-        with torch.cuda.nvtx.range("_LayerNormLinear_backward"):
+        with get_nvtx_range_context("_LayerNormLinear_backward"):
             saved_tensors = ctx.saved_tensors
             (  # pylint: disable=unbalanced-tuple-unpacking
                 inputmat,

@@ -44,7 +44,11 @@ from ..tensor.mxfp8_tensor import MXFP8Quantizer
 from ..tensor.float8_blockwise_tensor import Float8BlockQuantizer
 from ..tensor.storage.float8_tensor_storage import Float8TensorStorage
 from ..tensor.storage.mxfp8_tensor_storage import MXFP8TensorStorage
-from ..utils import is_non_tn_fp8_gemm_supported, torch_get_autocast_gpu_dtype
+from ..utils import (
+    is_non_tn_fp8_gemm_supported,
+    torch_get_autocast_gpu_dtype,
+    get_nvtx_range_context,
+)
 from ..tensor.storage.float8_blockwise_tensor_storage import Float8BlockwiseQTensorStorage
 from ...common.recipe import DelayedScaling, Recipe
 from ...debug.pytorch.debug_state import TEDebugState
@@ -1103,7 +1107,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
             if self.fp8 and self.training and is_fp8_activation_recompute_enabled():
                 FP8GlobalStateManager.copy_forward_fp8_meta_tensors_for_recompute(self.fp8_meta)
 
-        with torch.cuda.nvtx.range(self.__class__.__name__ + " forward"):
+        with get_nvtx_range_context(self.__class__.__name__ + " forward"):
             if not allow_non_contiguous and not inp.is_contiguous():
                 inp = inp.contiguous()
             yield inp
@@ -1498,7 +1502,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         """
         if not self.need_backward_dw():
             return
-        with torch.cuda.nvtx.range(f"_{self.__class__.__name__}_wgrad"):
+        with get_nvtx_range_context(f"_{self.__class__.__name__}_wgrad"):
             (wgrad, bgrad), _ = self.wgrad_store.pop()
             if not self.fuse_wgrad_accumulation:
                 weight_tensor = noop_cat(self._get_weight_tensors())

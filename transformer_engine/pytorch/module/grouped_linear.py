@@ -28,6 +28,7 @@ from ..utils import (
     clear_tensor_data,
     init_method_constant,
     requires_grad,
+    get_nvtx_range_context,
 )
 from ..distributed import (
     set_tensor_model_parallel_attributes,
@@ -275,7 +276,7 @@ class _GroupedLinear(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> Tuple[Union[torch.Tensor, None], ...]:
         # pylint: disable=missing-function-docstring
-        with torch.cuda.nvtx.range("_GroupedLinear_backward"):
+        with get_nvtx_range_context("_GroupedLinear_backward"):
             saved_tensors = restore_from_saved(ctx.tensor_objects, ctx.saved_tensors)
             N = ctx.num_gemms
             inputmats = saved_tensors[:N]
@@ -814,7 +815,7 @@ class GroupedLinear(TransformerEngineBaseModule):
                 self.activation_dtype,
                 torch.is_grad_enabled(),
                 self,
-                None, # skip_fp8_weight_update
+                None,  # skip_fp8_weight_update
                 self.save_original_input,
                 *weight_tensors,
                 *bias_tensors,
@@ -832,7 +833,7 @@ class GroupedLinear(TransformerEngineBaseModule):
         """
         if not self.need_backward_dw():
             return
-        with torch.cuda.nvtx.range("_GroupedLinear_wgrad"):
+        with get_nvtx_range_context("_GroupedLinear_wgrad"):
             (_, grad_biases_, _), tensor_list = self.wgrad_store.pop()
             wgrad_list = tensor_list[2]
             weight_params = [getattr(self, f"weight{i}") for i in range(self.num_gemms)]

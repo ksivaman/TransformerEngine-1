@@ -45,6 +45,7 @@ from ..utils import (
     clear_tensor_data,
     requires_grad,
     needs_quantized_gemm,
+    get_nvtx_range_context,
 )
 from ..distributed import (
     set_tensor_model_parallel_attributes,
@@ -683,7 +684,7 @@ class _LayerNormMLP(torch.autograd.Function):
         ctx, *grad_outputs: Tuple[torch.Tensor, ...]
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         # pylint: disable=missing-function-docstring
-        with torch.cuda.nvtx.range("_LayerNormMLP_backward"):
+        with get_nvtx_range_context("_LayerNormMLP_backward"):
             saved_tensors = ctx.saved_tensors
             (  # pylint: disable=unbalanced-tuple-unpacking
                 inputmat,
@@ -2247,7 +2248,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
         """
         if not self.need_backward_dw():
             return
-        with torch.cuda.nvtx.range("_LayerNormMLP_wgrad"):
+        with get_nvtx_range_context("_LayerNormMLP_wgrad"):
             (fc2_wgrad, fc2_bias_grad_, *_), tensor_list_fc2 = self.wgrad_store.pop()
             if self.use_bias and self.fc1_bias.grad is None:
                 (fc1_wgrad, fc1_bias_grad, *_), _ = self.wgrad_store.pop()

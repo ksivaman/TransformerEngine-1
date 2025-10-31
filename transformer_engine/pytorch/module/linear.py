@@ -38,6 +38,7 @@ from ..utils import (
     assert_dim_for_all_gather,
     nvtx_range_pop,
     nvtx_range_push,
+    get_nvtx_range_context,
 )
 from ..distributed import (
     set_tensor_model_parallel_attributes,
@@ -490,7 +491,7 @@ class _Linear(torch.autograd.Function):
         if ctx.ub_name is not None:
             nvtx_label = f"{nvtx_label}.{ctx.ub_name}"
 
-        with torch.cuda.nvtx.range("_Linear_backward"):
+        with get_nvtx_range_context("_Linear_backward"):
             saved_tensors = ctx.saved_tensors
             inputmat, weight_fp8, weight, bias = (  # pylint: disable=unbalanced-tuple-unpacking
                 restore_from_saved(ctx.tensor_objects, saved_tensors)
