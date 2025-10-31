@@ -38,6 +38,7 @@ from ..distributed import (
     _fsdp_gather_tensors,
 )
 from ..constants import dist_group_type
+from ..cpp_extensions.gemm import _NUM_MAX_UB_STREAMS
 from ..quantized_tensor import QuantizedTensor, QuantizedTensorStorage, Quantizer
 from ..tensor.float8_tensor import Float8Quantizer, Float8CurrentScalingQuantizer
 from ..tensor.mxfp8_tensor import MXFP8Quantizer
@@ -60,11 +61,8 @@ __all__ = ["initialize_ub", "destroy_ub", "UserBufferQuantizationMode"]
 _2X_ACC_FPROP = False
 _2X_ACC_DGRAD = True
 _2X_ACC_WGRAD = True
-_multi_stream_cublas_workspace = []
 _dummy_wgrads = {}
-_cublas_workspace = None
 _ub_communicators = None
-_NUM_MAX_UB_STREAMS = 3
 _MIN_STREAM_PRIORITY, _MAX_STREAM_PRIORITY = None, None
 layers_atomic_ring_exchange = []
 
@@ -76,35 +74,6 @@ class UserBufferQuantizationMode(Enum):
 
     NONE = "none"
     FP8 = "fp8"
-
-
-def get_cublas_workspace_size_bytes() -> None:
-    """Return 32 MiB if using hopper, 4 MiB for all other architectures."""
-    if torch.cuda.get_device_properties(torch.cuda.current_device()).major >= 9:
-        # 32 MiB for NVFP4 GEMM, plus additional 1024 B for alignment and misc scales
-        return 32 * 1024 * 1024 + 1024
-    return 4_194_304
-
-
-def get_workspace() -> torch.Tensor:
-    """Returns workspace for cublas."""
-    global _cublas_workspace
-    if _cublas_workspace is None:
-        _cublas_workspace = torch.empty(
-            get_cublas_workspace_size_bytes(), dtype=torch.uint8, device="cuda"
-        )
-    return _cublas_workspace
-
-
-def get_multi_stream_cublas_workspace() -> List[torch.Tensor]:
-    """Returns workspace for multi-stream cublas."""
-    global _multi_stream_cublas_workspace
-    if not _multi_stream_cublas_workspace:
-        for _ in range(tex.get_num_cublas_streams()):
-            _multi_stream_cublas_workspace.append(
-                torch.empty(get_cublas_workspace_size_bytes(), dtype=torch.uint8, device="cuda")
-            )
-    return _multi_stream_cublas_workspace
 
 
 def get_dummy_wgrad(shape: list, dtype: torch.dtype, zero=False) -> torch.Tensor:
@@ -278,16 +247,6 @@ def initialize_ub(
                 end="",
                 flush=True,
             )
-
-    # Allocate cuBLAS workspace with expanded size for chunking in overlapping GEMM calls
-    global _cublas_workspace
-    if _cublas_workspace is None:
-        _cublas_workspace = get_workspace().repeat(_NUM_MAX_UB_STREAMS)
-    elif _cublas_workspace.numel() != get_cublas_workspace_size_bytes() * _NUM_MAX_UB_STREAMS:
-        # This ensures we don't do `.repeat()` on an already expanded workspace
-        _cublas_workspace = torch.empty(
-            get_cublas_workspace_size_bytes(), dtype=torch.uint8, device="cuda"
-        ).repeat(_NUM_MAX_UB_STREAMS)
 
     # Default buffer precision: AllGather buffers use fp8 when using fp8 recipe
     layers_all_gather_overlap = [

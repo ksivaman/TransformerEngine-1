@@ -14,7 +14,6 @@ import transformer_engine_torch as tex
 from transformer_engine.common.recipe import Recipe
 from .base import (
     get_dummy_wgrad,
-    get_multi_stream_cublas_workspace,
     TransformerEngineBaseModule,
     _2X_ACC_FPROP,
     _2X_ACC_DGRAD,
@@ -174,7 +173,6 @@ class _GroupedLinear(torch.autograd.Function):
             inputmats,
             [out],
             activation_dtype,
-            get_multi_stream_cublas_workspace(),
             single_output=True,
             m_splits=m_splits,
             bias=biases,
@@ -366,7 +364,6 @@ class _GroupedLinear(torch.autograd.Function):
                     grad_output,
                     [dgrad],
                     ctx.activation_dtype,
-                    get_multi_stream_cublas_workspace(),
                     single_output=True,
                     layout="NN",
                     m_splits=ctx.m_splits,
@@ -413,7 +410,6 @@ class _GroupedLinear(torch.autograd.Function):
                 grouped_gemm_wgrad = functools.partial(
                     general_grouped_gemm,
                     out_dtype=ctx.activation_dtype,
-                    workspaces=get_multi_stream_cublas_workspace(),
                     layout="NT",
                     grad=True,
                     m_splits=ctx.m_splits,

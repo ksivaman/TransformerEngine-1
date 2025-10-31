@@ -19,7 +19,6 @@ from .base import (
     fill_userbuffers_buffer_for_all_gather,
     get_dummy_wgrad,
     get_ub,
-    get_workspace,
     TransformerEngineBaseModule,
     _2X_ACC_FPROP,
     _2X_ACC_DGRAD,
@@ -310,7 +309,6 @@ class _Linear(torch.autograd.Function):
         gemm_out, *_, reduce_scatter_out = general_gemm(
             weightmat,
             inputmat_total,
-            get_workspace(),
             quantization_params=output_quantizer,
             out_dtype=activation_dtype,
             bias=bias,
@@ -713,7 +711,6 @@ class _Linear(torch.autograd.Function):
                 gemm_out, *_, reduce_scatter_out = general_gemm(
                     weight_fp8,
                     grad_output,
-                    get_workspace(),
                     layout="NN",
                     grad=True,
                     quantization_params=ctx.grad_input_quantizer,
@@ -839,7 +836,6 @@ class _Linear(torch.autograd.Function):
 
                 # Arguments to include in wgrad GEMM closure
                 wgrad_gemm_kwargs = {
-                    "workspace": get_workspace(),
                     "out_dtype": (
                         main_grad.dtype if ctx.fuse_wgrad_accumulation else ctx.activation_dtype
                     ),

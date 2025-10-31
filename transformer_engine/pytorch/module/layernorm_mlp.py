@@ -20,7 +20,6 @@ from transformer_engine.pytorch import torch_version
 from transformer_engine.pytorch.tensor.utils import is_custom
 from .base import (
     fill_userbuffers_buffer_for_all_gather,
-    get_workspace,
     _ub_communicators,
     get_ub,
     TransformerEngineBaseModule,
@@ -418,7 +417,6 @@ class _LayerNormMLP(torch.autograd.Function):
         fc1_outputs = general_gemm(
             fc1_weight_final,
             ln_out_total,
-            get_workspace(),
             quantization_params=(
                 fc2_input_quantizer
                 if gemm_gelu_fusion
@@ -502,7 +500,6 @@ class _LayerNormMLP(torch.autograd.Function):
         gemm_out, *_, reduce_scatter_out = general_gemm(
             fc2_weight_final,
             act_out,
-            get_workspace(),
             out_dtype=activation_dtype,
             bias=fc2_bias,
             quantization_params=fc2_output_quantizer,
@@ -854,7 +851,6 @@ class _LayerNormMLP(torch.autograd.Function):
             gemm_output, *_ = general_gemm(
                 fc2_weight,
                 grad_output,
-                get_workspace(),
                 layout="NN",
                 grad=True,
                 quantization_params=(
@@ -948,7 +944,6 @@ class _LayerNormMLP(torch.autograd.Function):
 
                 # Arguments to include in wgrad GEMM closure
                 fc2_wgrad_gemm_kwargs = {
-                    "workspace": get_workspace(),
                     "out_dtype": (
                         origin_fc2_weight.main_grad.dtype
                         if ctx.fuse_wgrad_accumulation
@@ -1118,7 +1113,6 @@ class _LayerNormMLP(torch.autograd.Function):
             gemm_out, *_, reduce_scatter_out = general_gemm(
                 fc1_weight,
                 dact,
-                get_workspace(),
                 out=gemm_out,
                 out_dtype=ctx.activation_dtype,
                 quantization_params=ctx.fc1_grad_input_quantizer,
@@ -1197,7 +1191,6 @@ class _LayerNormMLP(torch.autograd.Function):
 
                 # Arguments to include in wgrad GEMM closure
                 fc1_wgrad_gemm_kwargs = {
-                    "workspace": get_workspace(),
                     "out_dtype": (
                         origin_fc1_weight.main_grad.dtype
                         if ctx.fuse_wgrad_accumulation
