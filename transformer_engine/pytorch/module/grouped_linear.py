@@ -40,7 +40,6 @@ from ..cpp_extensions import (
 )
 from ..constants import GemmParallelModes, dist_group_type
 from ..jit import no_torch_dynamo
-from ..graph import is_graph_capturing
 from ..cpu_offload import is_cpu_offload_enabled
 
 from ..tensor.float8_tensor import Float8CurrentScalingQuantizer, Float8Quantizer
@@ -478,7 +477,7 @@ class _GroupedLinear(torch.autograd.Function):
             ):
                 grad_biases = [None] * ctx.num_gemms
 
-        if ctx.reduce_and_update_bwd_fp8_tensors and not is_graph_capturing():
+        if ctx.reduce_and_update_bwd_fp8_tensors:
             FP8GlobalStateManager.reduce_and_update_fp8_tensors(forward=False)
         return (
             dgrad.view(ctx.inp_shape) if ctx.requires_dgrad else None,
@@ -759,13 +758,6 @@ class GroupedLinear(TransformerEngineBaseModule):
         ), "GroupedLinear doesn't support input tensor in FP8."
         assert len(m_splits) == self.num_gemms, "Number of splits should match number of GEMMs."
 
-        if FP8GlobalStateManager.fp8_graph_capturing():
-            skip_fp8_weight_update = FP8GlobalStateManager.get_skip_fp8_weight_update_tensor()
-        else:
-            skip_fp8_weight_update = None
-        if skip_fp8_weight_update is not None:
-            is_first_microbatch = False
-
         with torch.cuda.device(
             getattr(self, list(self.named_parameters())[0][0]).device
         ), self.prepare_forward(inp, num_gemms=self.num_gemms) as inp:
@@ -822,7 +814,7 @@ class GroupedLinear(TransformerEngineBaseModule):
                 self.activation_dtype,
                 torch.is_grad_enabled(),
                 self,
-                skip_fp8_weight_update,
+                None, # skip_fp8_weight_update
                 self.save_original_input,
                 *weight_tensors,
                 *bias_tensors,
