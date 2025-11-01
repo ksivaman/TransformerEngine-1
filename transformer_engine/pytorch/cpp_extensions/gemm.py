@@ -13,6 +13,8 @@ from ..constants import TE_DType
 from ..utils import get_sm_count, _empty_tensor
 
 from ..quantized_tensor import Quantizer, QuantizedTensor, QuantizedTensorStorage
+from ..tensor.storage.nvfp4_tensor_storage import NVFP4TensorStorage
+from ..tensor.storage.mxfp8_tensor_storage import MXFP8TensorStorage
 from ..tensor.storage.float8_tensor_storage import Float8TensorStorage
 from ..tensor.storage.float8_blockwise_tensor_storage import Float8BlockwiseQTensorStorage
 from ..tensor.utils import is_custom
@@ -72,17 +74,24 @@ def get_tensor_device(tensor: torch.Tensor) -> int:
         return tensor.device.index
     if isinstance(tensor, QuantizedTensor):
         return tensor.device.index
+    if isinstance(tensor, (Float8BlockwiseQTensorStorage, MXFP8TensorStorage, NVFP4TensorStorage)):
+        return (
+            tensor._rowwise_data.device.index
+            if tensor._rowwise_data is not None
+            else tensor._columnwise_data.device.index
+        )
     if isinstance(tensor, Float8TensorStorage):
         return (
             tensor._data.device.index
             if tensor._data is not None
             else tensor._transpose.device.index
         )
-    return (
-        tensor._rowwise_data.device.index
-        if tensor._rowwise_data is not None
-        else tensor._columnwise_data.device.index
-    )
+    try:
+        return (
+            tensor._data.device.index if tensor._data is not None else tensor._data_t.device.index
+        )
+    except AttributeError:
+        return torch.cuda.current_device()
 
 
 def general_gemm(
