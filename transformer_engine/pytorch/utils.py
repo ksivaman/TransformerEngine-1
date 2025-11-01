@@ -608,8 +608,7 @@ def get_nvtx_range_context(msg: str):
 
     if _nvtx_enabled():
         return torch.cuda.nvtx.range(msg)
-    else:
-        return nullcontext()
+    return nullcontext()
 
 
 def nvtx_range_push(msg: str) -> None:
