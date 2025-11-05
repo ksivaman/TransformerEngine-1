@@ -755,6 +755,8 @@ class GroupedLinear(TransformerEngineBaseModule):
         ), "GroupedLinear doesn't support input tensor in FP8."
         assert len(m_splits) == self.num_gemms, "Number of splits should match number of GEMMs."
 
+        is_grad_enabled = torch.is_grad_enabled()
+
         with self.prepare_forward(inp, num_gemms=self.num_gemms) as inp:
             weight_tensors = self._get_weight_tensors()
             bias_tensors = [getattr(self, f"bias{i}") for i in range(self.num_gemms)]
@@ -775,7 +777,7 @@ class GroupedLinear(TransformerEngineBaseModule):
                 # TODO: use internal after #1638 is merged. # pylint: disable=fixme
                 for i in range(self.num_gemms):
                     input_quantizers[i].internal = False
-                if torch.is_grad_enabled():
+                if is_grad_enabled:
                     grad_output_quantizers = [
                         self.quantizers["scaling_bwd"][
                             self._offsets["input"] + i * self._num_fp8_tensors_per_gemm["bwd"]
@@ -785,7 +787,7 @@ class GroupedLinear(TransformerEngineBaseModule):
                     for i in range(self.num_gemms):
                         grad_output_quantizers[i].internal = True
 
-            if torch.is_grad_enabled():
+            if is_grad_enabled:
                 linear_fn = _GroupedLinear.apply
                 args = []
             else:
@@ -807,7 +809,7 @@ class GroupedLinear(TransformerEngineBaseModule):
                 is_cpu_offload_enabled(),
                 self.sequence_parallel,
                 self.activation_dtype,
-                torch.is_grad_enabled(),
+                is_grad_enabled,
                 self,
                 None,  # skip_fp8_weight_update
                 self.save_original_input,

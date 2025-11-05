@@ -1506,8 +1506,10 @@ class LayerNormLinear(TransformerEngineBaseModule):
                                first microbatch (since it is the first gradient being
                                produced)
         """
+        is_grad_enabled = torch.is_grad_enabled()
+
         if is_in_onnx_export_mode():
-            return self.onnx_forward(inp, fp8_output)
+            return self.onnx_forward(inp, fp8_output, is_grad_enabled)
 
         debug = self.is_debug_iter()
 
@@ -1537,14 +1539,14 @@ class LayerNormLinear(TransformerEngineBaseModule):
             weight_tensor, bias_tensor = self._get_weight_and_bias_tensors()
 
             quantizers = (
-                self._get_quantizers(fp8_output, fp8_grad)
+                self._get_quantizers(fp8_output, fp8_grad, is_grad_enabled)
                 if not debug
-                else self._get_debug_quantizers(fp8_output, fp8_grad)
+                else self._get_debug_quantizers(fp8_output, fp8_grad, is_grad_enabled)
             )
             if debug:
                 if self.no_debug_features_active(quantizers):
                     debug = False
-                    quantizers = self._get_quantizers(fp8_output, fp8_grad)
+                    quantizers = self._get_quantizers(fp8_output, fp8_grad, is_grad_enabled)
 
             (
                 input_quantizer,
@@ -1555,7 +1557,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
                 grad_output_quantizer,
             ) = quantizers
 
-            if torch.is_grad_enabled():
+            if is_grad_enabled:
                 fwd_fn = _LayerNormLinear.apply
                 args = []
             else:
@@ -1588,8 +1590,8 @@ class LayerNormLinear(TransformerEngineBaseModule):
                 self.parallel_mode,
                 self.return_layernorm_output,
                 self.return_layernorm_output_gathered,
-                torch.is_grad_enabled(),
-                self.fwd_ln_sm_margin if torch.is_grad_enabled() else self.inf_ln_sm_margin,
+                is_grad_enabled,
+                self.fwd_ln_sm_margin if is_grad_enabled else self.inf_ln_sm_margin,
                 self.bwd_ln_sm_margin,
                 self.zero_centered_gamma,
                 self.normalization,
@@ -1622,7 +1624,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
             return out, ln_out
         return out
 
-    def _get_quantizers(self, fp8_output, fp8_grad):
+    def _get_quantizers(self, fp8_output, fp8_grad, is_grad_enabled):
         if not self.fp8:
             return [None] * 6
         grad_input_quantizer = None
@@ -1634,7 +1636,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
         (weight_quantizer,) = self._get_weight_quantizers()
         if fp8_output:
             output_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM1_OUTPUT]
-        if torch.is_grad_enabled():
+        if is_grad_enabled:
             grad_output_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_OUTPUT1]
             grad_output_quantizer.internal = True
             if fp8_grad:
@@ -1649,8 +1651,8 @@ class LayerNormLinear(TransformerEngineBaseModule):
             grad_output_quantizer,
         )
 
-    def _get_debug_quantizers(self, fp8_output, fp8_grad):
-        original_quantizers = self._get_quantizers(fp8_output, fp8_grad)
+    def _get_debug_quantizers(self, fp8_output, fp8_grad, is_grad_enabled):
+        original_quantizers = self._get_quantizers(fp8_output, fp8_grad, is_grad_enabled)
         assert TEDebugState.debug_enabled
         from ...debug.pytorch.debug_quantization import DebugQuantizer
 
@@ -1675,6 +1677,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
         self,
         inp: torch.Tensor,
         fp8_output: bool,
+        is_grad_enabled: bool,
     ) -> torch.Tensor:
         """
         ONNX-compatible version of the forward function that provides numerical equivalence
@@ -1690,7 +1693,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
             weight_quantizer,
             output_quantizer,
             *_,
-        ) = self._get_quantizers(fp8_output, fp8_grad=False)
+        ) = self._get_quantizers(fp8_output, False, is_grad_enabled)
         inp_dtype = inp.dtype
 
         weight_tensor, bias_tensor = self._get_weight_and_bias_tensors()

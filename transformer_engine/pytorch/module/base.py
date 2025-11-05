@@ -1040,6 +1040,8 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         """
         self.allow_different_data_and_param_types = allow_different_data_and_param_types
         self.forwarded_at_least_once = True
+        delayed_scaling_recipe = self.fp8_meta["recipe"].delayed()
+
         # Activation recomputation is used and this is the second forward phase.
         if self.fp8 and in_fp8_activation_recompute_phase():
             FP8GlobalStateManager.get_old_fp8_meta_tensors_for_recompute(self.fp8_meta)
@@ -1053,25 +1055,26 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
             self.init_fp8_metadata(num_gemms=num_gemms)
             self._check_weight_tensor_recipe_correspondence()
 
-            if self.fp8 and self.sequence_parallel and self.fp8_meta["recipe"].delayed():
-                assert self.fp8_meta["recipe"].reduce_amax, (
-                    "Amax reduction across tensor parallel group is "
-                    "necessary when using sequence parallelism with FP8."
-                )
+            if delayed_scaling_recipe:
+                if self.fp8 and self.sequence_parallel:
+                    assert self.fp8_meta["recipe"].reduce_amax, (
+                        "Amax reduction across tensor parallel group is "
+                        "necessary when using sequence parallelism with FP8."
+                    )
 
-            if self.fp8 and not FP8GlobalStateManager.fp8_graph_capturing():
-                FP8GlobalStateManager.add_fp8_tensors_to_global_buffer(self.fp8_meta)
+                if self.fp8 and not FP8GlobalStateManager.fp8_graph_capturing():
+                    FP8GlobalStateManager.add_fp8_tensors_to_global_buffer(self.fp8_meta)
 
-            # Activation recomputation is used and this is the first forward phase.
-            if self.fp8 and self.training and is_fp8_activation_recompute_enabled():
-                FP8GlobalStateManager.copy_forward_fp8_meta_tensors_for_recompute(self.fp8_meta)
+                # Activation recomputation is used and this is the first forward phase.
+                if self.fp8 and self.training and is_fp8_activation_recompute_enabled():
+                    FP8GlobalStateManager.copy_forward_fp8_meta_tensors_for_recompute(self.fp8_meta)
 
         with get_nvtx_range_context(self.__class__.__name__ + " forward"):
             if not allow_non_contiguous and not inp.is_contiguous():
                 inp = inp.contiguous()
             yield inp
 
-        if self.fp8 and in_fp8_activation_recompute_phase():
+        if delayed_scaling_recipe and self.fp8 and in_fp8_activation_recompute_phase():
             FP8GlobalStateManager.restore_fp8_meta_tensors(self.fp8_meta)
 
     def set_nccl_overlap_warning_if_tp(self) -> None:
@@ -1557,6 +1560,8 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         but the weight tensor is MXFP8Tensor (MXFP8BlockScaling is set in quantized_model_init()).
         """
         if not self.fp8 and not self.fp8_calibration:
+            return
+        if not self.primary_weights_in_fp8:
             return
         if not hasattr(self, "weight_names") or not self.weight_names:
             return

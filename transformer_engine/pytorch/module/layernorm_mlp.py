@@ -1800,6 +1800,8 @@ class LayerNormMLP(TransformerEngineBaseModule):
                                first microbatch (since it is the first gradient being
                                produced)
         """
+        is_grad_enabled = torch.is_grad_enabled()
+
         if is_in_onnx_export_mode():
             return self.onnx_forward(inp)
 
@@ -1820,14 +1822,14 @@ class LayerNormMLP(TransformerEngineBaseModule):
         with self.prepare_forward(inp, num_gemms=2) as inp:
 
             quantizers = (
-                self._get_quantizers(fp8_output)
+                self._get_quantizers(fp8_output, is_grad_enabled)
                 if not debug
-                else self._get_debug_quantizers(fp8_output)
+                else self._get_debug_quantizers(fp8_output, is_grad_enabled)
             )
             if debug:
                 if self.no_debug_features_active(quantizers):
                     debug = False
-                    quantizers = self._get_quantizers(fp8_output)
+                    quantizers = self._get_quantizers(fp8_output, is_grad_enabled)
 
             # Get quantizers
             (
@@ -1859,7 +1861,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
             if self.bias_gelu_nvfusion and not use_reentrant_activation_recompute():
                 self.bias_gelu_nvfusion = False
 
-            if torch.is_grad_enabled():
+            if is_grad_enabled:
                 fwd_fn = _LayerNormMLP.apply
                 args = []
             else:
@@ -1901,8 +1903,8 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 self.return_layernorm_output_gathered,
                 self.bias_gelu_nvfusion and not self.fp8 and not debug,
                 self.set_parallel_mode,
-                torch.is_grad_enabled(),
-                self.fwd_ln_sm_margin if torch.is_grad_enabled() else self.inf_ln_sm_margin,
+                is_grad_enabled,
+                self.fwd_ln_sm_margin if is_grad_enabled else self.inf_ln_sm_margin,
                 self.bwd_ln_sm_margin,
                 self.zero_centered_gamma,
                 self.activation,
@@ -1936,7 +1938,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
             return out, ln_out
         return out
 
-    def _get_quantizers(self, fp8_output):
+    def _get_quantizers(self, fp8_output, is_grad_enabled):
         (
             fc1_input_quantizer,
             fc1_output_quantizer,
@@ -1966,7 +1968,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 fc2_output_quantizer = self.quantizers["scaling_fwd"][
                     tex.FP8FwdTensors.GEMM2_OUTPUT
                 ]
-            if torch.is_grad_enabled():
+            if is_grad_enabled:
                 fc2_grad_output_quantizer = self.quantizers["scaling_bwd"][
                     tex.FP8BwdTensors.GRAD_OUTPUT2
                 ]
@@ -1991,7 +1993,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
             fc2_grad_output_quantizer,
         )
 
-    def onnx_forward(self, inp: torch.Tensor) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
+    def onnx_forward(self, inp: torch.Tensor, is_grad_enabled: bool) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         ONNX-compatible version of the forward function that provides numerical equivalence
         while only using operations that have defined ONNX symbolic translations.
@@ -2008,7 +2010,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
             fc2_weight_quantizer,
             output_quantizer,
             *_,
-        ) = self._get_quantizers(False)
+        ) = self._get_quantizers(False, is_grad_enabled)
         inp_dtype = inp.dtype
 
         fc1_weight, fc2_weight = self._get_weight_tensors()
@@ -2093,10 +2095,10 @@ class LayerNormMLP(TransformerEngineBaseModule):
             return fc2_out, fc2_bias.to(inp_dtype)
         return fc2_out
 
-    def _get_debug_quantizers(self, fp8_output):
+    def _get_debug_quantizers(self, fp8_output, is_grad_enabled):
         from ...debug.pytorch.debug_quantization import DebugQuantizer
 
-        base_quantizers = list(self._get_quantizers(fp8_output))
+        base_quantizers = list(self._get_quantizers(fp8_output, is_grad_enabled))
         assert TEDebugState.debug_enabled
 
         def make_debug(prefix, offset):
