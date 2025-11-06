@@ -1803,7 +1803,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
         is_grad_enabled = torch.is_grad_enabled()
 
         if is_in_onnx_export_mode():
-            return self.onnx_forward(inp)
+            return self.onnx_forward(inp, is_grad_enabled)
 
         debug = self.is_debug_iter()
 
@@ -1993,7 +1993,9 @@ class LayerNormMLP(TransformerEngineBaseModule):
             fc2_grad_output_quantizer,
         )
 
-    def onnx_forward(self, inp: torch.Tensor, is_grad_enabled: bool) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
+    def onnx_forward(
+        self, inp: torch.Tensor, is_grad_enabled: bool
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         ONNX-compatible version of the forward function that provides numerical equivalence
         while only using operations that have defined ONNX symbolic translations.
