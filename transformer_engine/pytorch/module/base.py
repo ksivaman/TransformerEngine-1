@@ -1132,7 +1132,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         # Also supports debug quantization, which is handled inside gather_along_first_dim.
         if gather_grad_output:
             grad_bias = None
-            if ctx.non_tensor_args.use_bias:
+            if ctx.use_bias:
                 grad_bias = grad_output.view(-1, grad_output.shape[-1]).sum(dim=0)
             if ctx.non_tensor_args.ub_overlap_ag_dgrad:
                 # Quantize the gradient if needed
@@ -1186,7 +1186,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
 
         # FP8 without all-gather: fused bgrad + cast + transpose
         grad_bias = None
-        if ctx.non_tensor_args.use_bias:
+        if ctx.use_bias:
             if isinstance(
                 grad_output,
                 (

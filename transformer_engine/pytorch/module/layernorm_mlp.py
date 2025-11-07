@@ -251,22 +251,6 @@ class _LayerNormMLP(torch.autograd.Function):
         backwards_needs_fc1_input = non_tensor_args.is_grad_enabled and fc1_weight.requires_grad
         device = inp.device
 
-        # Configure Userbuffers communication (comm+GEMM overlap)
-        if non_tensor_args.debug:  # turn off userbuffers in debug mode
-            non_tensor_args.ub_overlap_ag = False
-            non_tensor_args.ub_overlap_rs = False
-            non_tensor_args.ub_overlap_rs_dgrad = False
-            non_tensor_args.ub_bulk_wgrad = False
-            non_tensor_args.ub_bulk_dgrad = False
-        non_tensor_args.ub_overlap_ag = (
-            non_tensor_args.ub_overlap_ag
-            and non_tensor_args.is_grad_enabled
-            and not non_tensor_args.return_layernorm_output_gathered
-        )
-        non_tensor_args.ub_overlap_rs = (
-            non_tensor_args.ub_overlap_rs and non_tensor_args.is_grad_enabled
-        )
-
         # Choose whether to use GEMM kernel with split accumulator
         use_split_accumulator = _2X_ACC_FPROP
         if non_tensor_args.fp8:
@@ -433,18 +417,15 @@ class _LayerNormMLP(torch.autograd.Function):
         # - gemm_gelu_fusion - default for full precision, optional for fp8 - need to turn on gemm_gelu_fusion,
         # - bias_gelu_fusion - only for full precision.
         # If both gemm_gelu_fusion and bias_gelu_fusion are enabled, only bias_gelu_fusion will be performer
-        if non_tensor_args.activation != "gelu":
-            # blockwise scaled gemms don't support gemm_gelu_fusion in fwd.
-            gemm_gelu_fusion = bias_gelu_fusion = False
-        else:
+        if non_tensor_args.activation == "gelu":
             if non_tensor_args.fp8:
-                assert not bias_gelu_fusion, "Bias gelu fusion is supported only for full precision"
+                assert (
+                    not non_tensor_args.bias_gelu_fusion
+                ), "Bias gelu fusion is supported only for full precision"
             else:
                 gemm_gelu_fusion = True
-            if gemm_gelu_fusion and bias_gelu_fusion:
+            if gemm_gelu_fusion and non_tensor_args.bias_gelu_fusion:
                 gemm_gelu_fusion = False
-        if non_tensor_args.debug:
-            gemm_gelu_fusion = False
         fc1_outputs = general_gemm(
             fc1_weight_final,
             ln_out_total,
@@ -455,7 +436,7 @@ class _LayerNormMLP(torch.autograd.Function):
             ),
             out_dtype=non_tensor_args.activation_dtype,
             bias=(
-                fc1_bias if not bias_gelu_fusion else None
+                fc1_bias if not non_tensor_args.bias_gelu_fusion else None
             ),  # otherwise bias is added later (fused with gelu)
             gelu=gemm_gelu_fusion,
             use_split_accumulator=use_split_accumulator,
@@ -476,7 +457,7 @@ class _LayerNormMLP(torch.autograd.Function):
         fc1_out_without_bias = None
         act_params = non_tensor_args.activation_params or {}
 
-        if bias_gelu_fusion:
+        if non_tensor_args.bias_gelu_fusion:
             fc1_out = None
             fc1_out_without_bias, *_ = fc1_outputs
             act_out = bias_gelu_fused(fc1_out_without_bias, fc1_bias)
@@ -596,7 +577,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 mu,
                 rsigma,
                 ln_out,
-                fc1_out_without_bias if bias_gelu_fusion else fc1_out,
+                fc1_out_without_bias if non_tensor_args.bias_gelu_fusion else fc1_out,
                 act_out,
                 (
                     fc1_weight_final
@@ -665,7 +646,6 @@ class _LayerNormMLP(torch.autograd.Function):
             ctx.fp8_recipe = FP8GlobalStateManager.get_fp8_recipe() if non_tensor_args.fp8 else None
             ctx.use_bias = fc2_bias is not None
             ctx.inp_shape = inp_shape
-            ctx.bias_gelu_fusion = bias_gelu_fusion
             non_tensor_args.return_layernorm_output_gathered = (
                 non_tensor_args.return_layernorm_output_gathered
                 and non_tensor_args.sequence_parallel
@@ -863,7 +843,7 @@ class _LayerNormMLP(torch.autograd.Function):
             fc2_dgrad_gemm_gelu_fusion = (
                 not ctx.non_tensor_args.fp8
                 and (ctx.non_tensor_args.activation == "gelu")
-                and (not ctx.bias_gelu_fusion)
+                and (not ctx.non_tensor_args.bias_gelu_fusion)
                 and (not ctx.non_tensor_args.debug)
             )
 
@@ -1057,7 +1037,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 ctx.non_tensor_args.fc1_grad_output_quantizer.set_usage(
                     rowwise=True, columnwise=True
                 )
-            if ctx.bias_gelu_fusion:
+            if ctx.non_tensor_args.bias_gelu_fusion:
                 # Fusion: gemm, bias + gelu
                 assert ctx.non_tensor_args.activation == "gelu"
                 assert not ctx.non_tensor_args.fp8
@@ -1905,6 +1885,8 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 fwd_fn = _LayerNormMLP.forward
                 autograd_ctx = [None]
 
+            bias_gelu_fusion = self.bias_gelu_nvfusion and not self.fp8 and not debug and self.activation == "gelu"
+            gemm_gelu_fusion = self.gemm_gelu_fusion and not debug and self.activation == "gelu"
             non_tensor_args = _LayerNormMLPNonTensorArgs(
                 self.eps,
                 is_first_microbatch,
@@ -1932,7 +1914,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 self.activation_dtype,
                 self.return_layernorm_output,
                 self.return_layernorm_output_gathered,
-                self.bias_gelu_nvfusion and not self.fp8 and not debug,
+                bias_gelu_fusion,
                 self.set_parallel_mode,
                 is_grad_enabled,
                 self.fwd_ln_sm_margin if is_grad_enabled else self.inf_ln_sm_margin,
@@ -1941,12 +1923,16 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 self.activation,
                 self.activation_params,
                 self.normalization,
-                self.ub_overlap_ag,
-                self.ub_overlap_rs,
-                self.ub_overlap_rs_dgrad,
-                self.ub_bulk_dgrad,
-                self.ub_bulk_wgrad,
-                self.gemm_gelu_fusion and not debug,
+                (
+                    self.ub_overlap_ag and self.return_layernorm_output_gathered and is_grad_enabled
+                    if not debug
+                    else False
+                ),
+                self.ub_overlap_rs and is_grad_enabled if not debug else False,
+                self.ub_overlap_rs_dgrad if not debug else False,
+                self.ub_bulk_dgrad if not debug else False,
+                self.ub_bulk_wgrad if not debug else False,
+                self.gemm_gelu_fusion and not debug and self.activation == "gelu",
                 self.fsdp_group,
                 self,
                 skip_fp8_weight_update,

@@ -148,12 +148,6 @@ class _Linear(torch.autograd.Function):
         )
 
         # Configure Userbuffers communication (comm+GEMM overlap)
-        if non_tensor_args.debug:  # turn off userbuffers in debug mode
-            non_tensor_args.ub_overlap_rs_fprop = False
-            non_tensor_args.ub_overlap_ag_fprop = False
-            non_tensor_args.ub_overlap_rs_dgrad = False
-            non_tensor_args.ub_bulk_wgrad = False
-            non_tensor_args.ub_bulk_dgrad = False
         ub_obj = None
         ub_type = None
         if non_tensor_args.ub_overlap_rs_fprop:
@@ -1532,12 +1526,12 @@ class Linear(TransformerEngineBaseModule):
                 self.activation_dtype,
                 self.parallel_mode,
                 is_grad_enabled,
-                self.ub_overlap_rs_fprop,
-                self.ub_overlap_ag_dgrad,
-                self.ub_overlap_ag_fprop,
-                self.ub_overlap_rs_dgrad,
-                self.ub_bulk_dgrad,
-                self.ub_bulk_wgrad,
+                self.ub_overlap_rs_fprop if not debug else False,
+                self.ub_overlap_ag_dgrad if not debug else False,
+                self.ub_overlap_ag_fprop if not debug else False,
+                self.ub_overlap_rs_dgrad if not debug else False,
+                self.ub_bulk_dgrad if not debug else False,
+                self.ub_bulk_wgrad if not debug else False,
                 self.ub_name,
                 fp8_output,
                 self.fsdp_group,

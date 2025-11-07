@@ -176,20 +176,8 @@ class _LayerNormLinear(torch.autograd.Function):
         backward_needs_input = non_tensor_args.is_grad_enabled and weight_requires_grad
 
         # Configure Userbuffers communication (comm+GEMM overlap)
-        if non_tensor_args.debug:  # turn off userbuffers in debug mode
-            non_tensor_args.ub_overlap_ag_fprop = False
-            non_tensor_args.ub_overlap_rs_fprop = False
-            non_tensor_args.ub_overlap_ag_dgrad = False
-            non_tensor_args.ub_overlap_rs_dgrad = False
-            non_tensor_args.ub_bulk_wgrad = False
-            non_tensor_args.ub_bulk_dgrad = False
         ub_obj = None
         ub_type = None
-        non_tensor_args.ub_overlap_ag_fprop = (
-            non_tensor_args.ub_overlap_ag_fprop
-            and non_tensor_args.is_grad_enabled
-            and not non_tensor_args.return_layernorm_output
-        )
         if non_tensor_args.ub_overlap_rs_fprop:
             ub_obj = get_ub(non_tensor_args.ub_name + "_fprop", non_tensor_args.fp8)
             ub_type = tex.CommOverlapType.RS
@@ -554,7 +542,9 @@ class _LayerNormLinear(torch.autograd.Function):
             # Since main_grad can be modified inplace, it should not be a part of saved_tensors
             main_grad = (
                 ctx.main_grad_func()
-                if weight is not None and ctx.fuse_wgrad_accumulation.fp8 and ctx.requires_wgrad
+                if weight is not None
+                and ctx.non_tensor_args.fuse_wgrad_accumulation
+                and ctx.requires_wgrad
                 else None
             )
 
@@ -574,10 +564,10 @@ class _LayerNormLinear(torch.autograd.Function):
 
             # For CPU offloading, we offloaded weight and weight.main_grad to different tensors,
             # we need to connect them into one.
-            if ctx.non_tensor_args.fp8:
+            if ctx.non_tensor_args.cpu_offloading:
                 if ctx.grad_added_to_main_grad:
                     origin_weight = ctx.weight_object
-                if ctx.requires_wgrad and ctx.fuse_wgrad_accumulation.fp8:
+                if ctx.requires_wgrad and ctx.non_tensor_args.fuse_wgrad_accumulation:
                     origin_weight.main_grad = main_grad
 
             # Configure Userbuffers communication (comm+GEMM overlap)
@@ -828,7 +818,7 @@ class _LayerNormLinear(torch.autograd.Function):
                 if ln_out_total_work is not None:
                     ln_out_total_work.wait()
                     ln_out_total_work = None
-                if ctx.non_tensor_args.fp8 or ctx.debug.wgrad_store:
+                if ctx.non_tensor_args.fp8 or ctx.non_tensor_args.debug:
                     if isinstance(ln_out_total, QuantizedTensorStorage):
                         ln_out_total.update_usage(columnwise_usage=True)
                     else:
@@ -837,7 +827,7 @@ class _LayerNormLinear(torch.autograd.Function):
                         )
                         ln_out_total = ctx.non_tensor_args.input_quantizer(ln_out_total)
 
-                if ctx.non_tensor_args.fp8 or ctx.debug.wgrad_store:
+                if ctx.non_tensor_args.fp8 or ctx.non_tensor_args.debug:
                     if isinstance(grad_output, QuantizedTensorStorage):
                         grad_output.update_usage(columnwise_usage=True)
                     else:
@@ -856,11 +846,13 @@ class _LayerNormLinear(torch.autograd.Function):
                 # Figure out whether to output wgrad GEMM directly into main grad
                 if ctx.non_tensor_args.is_first_microbatch is not None:
                     accumulate_wgrad_into_param_main_grad = (
-                        ctx.fuse_wgrad_accumulation.fp8
+                        ctx.non_tensor_args.fuse_wgrad_accumulation
                         and not ctx.non_tensor_args.is_first_microbatch
                     )
                 else:
-                    accumulate_wgrad_into_param_main_grad = ctx.fuse_wgrad_accumulation.fp8
+                    accumulate_wgrad_into_param_main_grad = (
+                        ctx.non_tensor_args.fuse_wgrad_accumulation
+                    )
 
                 # Output buffer for overlapping FP8 grad input
                 # reduce-scatter with wgrad GEMM
@@ -876,7 +868,7 @@ class _LayerNormLinear(torch.autograd.Function):
                 wgrad_gemm_kwargs = {
                     "out_dtype": (
                         main_grad.dtype
-                        if ctx.fuse_wgrad_accumulation.fp8
+                        if ctx.non_tensor_args.fuse_wgrad_accumulation
                         else ctx.non_tensor_args.activation_dtype
                     ),
                     "quantization_params": ctx.non_tensor_args.grad_weight_quantizer,
@@ -886,7 +878,7 @@ class _LayerNormLinear(torch.autograd.Function):
                         else False
                     ),
                     "layout": "NT",
-                    "out": main_grad if ctx.fuse_wgrad_accumulation.fp8 else None,
+                    "out": main_grad if ctx.non_tensor_args.fuse_wgrad_accumulation else None,
                     "bias": (bias if (grad_bias is None and not ctx.non_tensor_args.fp8) else None),
                     "use_split_accumulator": use_split_accumulator,
                     "grad": True,
@@ -915,8 +907,8 @@ class _LayerNormLinear(torch.autograd.Function):
 
                 # Choose whether to call wgrad GEMM now or delay
                 if (
-                    ctx.normalization.wgrad_store is not None
-                    and ctx.normalization.wgrad_store.delay_wgrad_compute()
+                    ctx.non_tensor_args.wgrad_store is not None
+                    and ctx.non_tensor_args.wgrad_store.delay_wgrad_compute()
                 ):
                     if (
                         wgrad_gemm_kwargs["ub"] is not None
@@ -928,7 +920,7 @@ class _LayerNormLinear(torch.autograd.Function):
                             "Delayed weight grad computation is not supported "
                             "with Userbuffers (tensor-parallel communication overlapping)"
                         )
-                    ctx.normalization.wgrad_store.put([ln_out_total, grad_output], wgrad_gemm)
+                    ctx.non_tensor_args.wgrad_store.put([ln_out_total, grad_output], wgrad_gemm)
                 else:
 
                     # Call wgrad GEMM now
@@ -997,7 +989,7 @@ class _LayerNormLinear(torch.autograd.Function):
             dgamma = None
             dbeta = None
             nvtx_range_push(f"{nvtx_label}.norm")
-            if ctx.normalization.ub_name == "LayerNorm":
+            if ctx.non_tensor_args.ub_name == "LayerNorm":
                 dgrad, dgamma, dbeta = tex.layernorm_bwd(
                     dgrad,
                     inputmat,
@@ -1008,7 +1000,7 @@ class _LayerNormLinear(torch.autograd.Function):
                     ctx.non_tensor_args.zero_centered_gamma,
                 )
                 dgrad = dgrad.reshape(inputmat.size())
-            elif ctx.normalization.ub_name == "RMSNorm":
+            elif ctx.non_tensor_args.ub_name == "RMSNorm":
                 dgrad, dgamma = tex.rmsnorm_bwd(
                     dgrad,
                     inputmat,
@@ -1025,7 +1017,7 @@ class _LayerNormLinear(torch.autograd.Function):
 
         if ctx.requires_wgrad:
             # Handle custom DDP from mcore.
-            if ctx.fuse_wgrad_accumulation.fp8 and hasattr(
+            if ctx.non_tensor_args.fuse_wgrad_accumulation and hasattr(
                 origin_weight, "grad_added_to_main_grad"
             ):
                 origin_weight.grad_added_to_main_grad = True
@@ -1040,7 +1032,7 @@ class _LayerNormLinear(torch.autograd.Function):
                         list(origin_weight.main_grad.shape),
                         origin_weight.dtype,
                     )
-            elif ctx.fuse_wgrad_accumulation.fp8:
+            elif ctx.non_tensor_args.fuse_wgrad_accumulation:
                 wgrad = None
         else:
             wgrad = None
@@ -1605,12 +1597,16 @@ class LayerNormLinear(TransformerEngineBaseModule):
                 self.bwd_ln_sm_margin,
                 self.zero_centered_gamma,
                 self.normalization,
-                self.ub_overlap_ag_fprop,
-                self.ub_overlap_rs_fprop,
-                self.ub_overlap_ag_dgrad,
-                self.ub_overlap_rs_dgrad,
-                self.ub_bulk_wgrad,
-                self.ub_bulk_dgrad,
+                (
+                    self.ub_overlap_ag_fprop and self.return_layernorm_output and is_grad_enabled
+                    if not debug
+                    else False
+                ),
+                self.ub_overlap_rs_fprop if not debug else False,
+                self.ub_overlap_ag_dgrad if not debug else False,
+                self.ub_overlap_rs_dgrad if not debug else False,
+                self.ub_bulk_wgrad if not debug else False,
+                self.ub_bulk_dgrad if not debug else False,
                 self.ub_name,
                 self.fsdp_group,
                 self,
