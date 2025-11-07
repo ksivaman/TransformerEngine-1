@@ -1110,19 +1110,21 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         """
         grad_output = grad_output.reshape((-1, grad_output.shape[-1]))
         grad_output = grad_output.contiguous()
-        gather_grad_output = row_parallel_mode and ctx.sequence_parallel
+        gather_grad_output = row_parallel_mode and ctx.non_tensor_args.sequence_parallel
 
         # Non-FP8 case: bgrad is fused with wgrad for this case.
-        if not ctx.fp8 and not ctx.debug:
+        if not ctx.non_tensor_args.fp8 and not ctx.non_tensor_args.debug:
             if gather_grad_output:
-                if not ctx.ub_overlap_ag:  # Perform NCCL all-gather
-                    grad_output, _ = gather_along_first_dim(grad_output, ctx.tp_group)
+                if not ctx.non_tensor_args.ub_overlap_ag_dgrad:  # Perform NCCL all-gather
+                    grad_output, _ = gather_along_first_dim(
+                        grad_output, ctx.non_tensor_args.tp_group
+                    )
                 else:  # Initialize Userbuffers all-gather
                     grad_output, _ = fill_userbuffers_buffer_for_all_gather(
                         ctx.ub_obj_gradout,
                         grad_output,
                         None,
-                        ctx.tp_group,
+                        ctx.non_tensor_args.tp_group,
                     )
             return grad_output, None
 
@@ -1130,9 +1132,9 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
         # Also supports debug quantization, which is handled inside gather_along_first_dim.
         if gather_grad_output:
             grad_bias = None
-            if ctx.use_bias:
+            if ctx.non_tensor_args.use_bias:
                 grad_bias = grad_output.view(-1, grad_output.shape[-1]).sum(dim=0)
-            if ctx.ub_overlap_ag:
+            if ctx.non_tensor_args.ub_overlap_ag_dgrad:
                 # Quantize the gradient if needed
                 if not isinstance(
                     grad_output,
@@ -1150,19 +1152,19 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
                     ctx.ub_obj_gradout,
                     grad_output,
                     quantizer,
-                    ctx.tp_group,
+                    ctx.non_tensor_args.tp_group,
                 )
             else:
                 grad_output, _ = gather_along_first_dim(
                     grad_output,
-                    ctx.tp_group,
+                    ctx.non_tensor_args.tp_group,
                     quantizer=quantizer,
                 )
             return grad_output, grad_bias
 
         # Debug without all-gather: unfused cast and bgrad
         # bgrad only if wgrad is in FP8, otherwise it is fused with wgrad and we return None
-        if ctx.debug:
+        if ctx.non_tensor_args.debug:
             grad_output_ = quantizer(grad_output)
             if (
                 isinstance(
@@ -1174,7 +1176,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
                         Float8BlockwiseQTensorStorage,
                     ),
                 )
-                and ctx.use_bias
+                and ctx.non_tensor_args.use_bias
             ):
                 grad_bias = grad_output.view(-1, grad_output.shape[-1]).sum(dim=0)
             else:
@@ -1184,7 +1186,7 @@ class TransformerEngineBaseModule(torch.nn.Module, ABC):
 
         # FP8 without all-gather: fused bgrad + cast + transpose
         grad_bias = None
-        if ctx.use_bias:
+        if ctx.non_tensor_args.use_bias:
             if isinstance(
                 grad_output,
                 (

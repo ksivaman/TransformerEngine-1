@@ -4,7 +4,7 @@
 
 """FP8 Padding API"""
 
-from typing import List, Optional
+from typing import List, Optional, NamedTuple
 
 import torch
 
@@ -17,6 +17,16 @@ from ..jit import no_torch_dynamo
 __all__ = ["Fp8Unpadding"]
 
 
+# A way to limit arguments to `torch.autograd.Function` in order to
+# limit CPU overhead incurred by PyTorch's argument validation.
+class _Fp8UnpaddingNonTensorArgs(NamedTuple):
+    """Arguments to the forward pass of _Fp8Unpadding"""
+
+    m_splits: List[int]
+    padded_m_splits: List[int]
+    is_grad_enabled: bool
+
+
 class _Fp8Unpadding(torch.autograd.Function):
     """functional FP8 unpadding"""
 
@@ -24,22 +34,25 @@ class _Fp8Unpadding(torch.autograd.Function):
     def forward(
         ctx,
         inp: torch.Tensor,
-        m_splits: List[int],
-        padded_m_splits: List[int],
-        is_grad_enabled: bool,
+        non_tensor_args: _Fp8UnpaddingNonTensorArgs,
     ) -> torch.Tensor:
         # pylint: disable=missing-function-docstring
         in_features = inp.shape[-1]
 
         # Allocate cast and transpose output tensor
-        total_row = sum(m_splits)
+        total_row = sum(non_tensor_args.m_splits)
         out_ret = torch.empty([total_row, in_features], dtype=inp.dtype, device=inp.device)
 
-        tex.fused_multi_row_unpadding(inp.view(-1, in_features), out_ret, padded_m_splits, m_splits)
+        tex.fused_multi_row_unpadding(
+            inp.view(-1, in_features),
+            out_ret,
+            non_tensor_args.padded_m_splits,
+            non_tensor_args.m_splits,
+        )
 
-        if is_grad_enabled:
-            ctx.m_splits = m_splits
-            ctx.padded_m_splits = padded_m_splits
+        if non_tensor_args.is_grad_enabled:
+            ctx.m_splits = non_tensor_args.m_splits
+            ctx.padded_m_splits = non_tensor_args.padded_m_splits
             ctx.requires_dgrad = inp.requires_grad
 
         return out_ret
@@ -63,7 +76,7 @@ class _Fp8Unpadding(torch.autograd.Function):
                 grad_output.view(-1, in_features), grad_input, ctx.m_splits, ctx.padded_m_splits
             )
 
-        return (grad_input, None, None, None)
+        return grad_input, None
 
 
 class Fp8Unpadding(torch.nn.Module):
@@ -126,19 +139,19 @@ class Fp8Unpadding(torch.nn.Module):
         if m_splits == padded_m_splits:
             return inp
 
-        if torch.is_grad_enabled():
+        is_grad_enabled = torch.is_grad_enabled()
+        if is_grad_enabled:
             fn = _Fp8Unpadding.apply
-            args = []
+            autograd_ctx = []
         else:
             fn = _Fp8Unpadding.forward
-            args = [None]
+            autograd_ctx = [None]
 
-        args += (
-            inp,
+        non_tensor_args = _Fp8UnpaddingNonTensorArgs(
             m_splits,
             padded_m_splits,
-            torch.is_grad_enabled(),
+            is_grad_enabled,
         )
-        out = fn(*args)
+        out = fn(*autograd_ctx, inp, non_tensor_args)
 
         return out
