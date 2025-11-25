@@ -85,6 +85,9 @@ from transformer_engine.pytorch.tensor import MXFP8Tensor
 from transformer_engine.pytorch.tensor import Float8BlockwiseQTensor
 from transformer_engine.pytorch.tensor import NVFP4Tensor
 
+# Backward compatibility.
+from transformer_engine.pytorch import fp8
+
 try:
     torch._dynamo.config.error_on_nested_jit_trace = False
 except AttributeError:
