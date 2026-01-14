@@ -375,12 +375,14 @@ class GroupedTensor:
             total_elements = sum(s[0] * s[1] for s in shape)
             logical_shape = (1, total_elements)
 
+        no_quantization = quantizers is None or len(quantizers) == 0 or quantizers[0] is None
+
         # TODO(ksivaman): (Do we need multiple quantizers?)
         # Current implementation assumes all tensors have the different quantizers.
         # instances but effectively the same quantizer.
-        rowwise_usage = quantizers[0].rowwise_usage if quantizers is not None else True
+        rowwise_usage = quantizers[0].rowwise_usage if not no_quantization else True
         columnwise_usage = (
-            quantizers[0].columnwise_usage if quantizers is not None else False
+            quantizers[0].columnwise_usage if not no_quantization else False
         )
 
         # Calculate total elements across all tensors
@@ -395,7 +397,7 @@ class GroupedTensor:
         scale = None
         scale_inv_offsets = None
         columnwise_scale_inv_offsets = None
-        if quantizers is None or len(quantizers) == 0 or quantizers[0] is None:
+        if no_quantization:
             assert (
                 dtype is not None
             ), "dtype must be provided for unquantized GroupedTensor"

@@ -801,7 +801,7 @@ class GroupedLinear(TransformerEngineBaseModule):
         # Create the weight storage.
         grouped_weights = GroupedTensor.make_grouped_tensor(
             num_tensors=self.num_gemms,
-            shape=[(self.out_features, self.in_features)],
+            shape=[(self.out_features, self.in_features)] * self.num_gemms,
             quantizers=weight_quantizers,
             dtype=weights[0].dtype if weight_quantizers[0] is None else None,
         )
