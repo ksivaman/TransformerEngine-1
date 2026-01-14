@@ -766,14 +766,15 @@ class GroupedLinear(TransformerEngineBaseModule):
 
         # Copy existing params into storage.
         # TODO(ksivamani): Verify correctness of copy for all recipes.
-        for i in range(self.num_gemms):
-            grouped_weights.quantized_tensors[i].copy_(weights[i])
+        with torch.no_grad():
+            for i in range(self.num_gemms):
+                grouped_weights.quantized_tensors[i].copy_(weights[i])
 
         # Re-register the grouped weights as parameters.
         for i in range(self.num_gemms):
             self.register_parameter(
                 f"weight{i}",
-                grouped_weights.quantized_tensors[i],
+                torch.nn.Parameter(grouped_weights.quantized_tensors[i]),
                 init_fn=self.init_method,
                 get_rng_state_tracker=self.get_rng_state_tracker,
                 fp8_meta_index=self._offsets["weight"] + i * self._num_fp8_tensors_per_gemm["fwd"],
