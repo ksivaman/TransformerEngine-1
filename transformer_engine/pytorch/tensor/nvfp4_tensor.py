@@ -97,9 +97,7 @@ def get_rht_matrix(with_random_sign_mask: bool, device: int) -> torch.Tensor:
         signs = get_wgrad_sign_vector(device=device)
     else:
         signs = get_no_random_sign_vector(device=device)
-    sign_matrix = signs * torch.eye(
-        hadamard_dimension, dtype=torch.float32, device=device
-    )
+    sign_matrix = signs * torch.eye(hadamard_dimension, dtype=torch.float32, device=device)
     rht_matrix = sign_matrix @ get_hadamard_matrix(hadamard_dimension, device=device)
     return rht_matrix.to(dtype=torch.bfloat16)
 
@@ -157,9 +155,7 @@ class NVFP4Quantizer(Quantizer):
         self.rht_matrix_random_sign_mask_t = get_random_sign_mask_for_rht(
             with_random_sign_mask, torch.cuda.current_device()
         )
-        self.rht_matrix = get_rht_matrix(
-            with_random_sign_mask, torch.cuda.current_device()
-        )
+        self.rht_matrix = get_rht_matrix(with_random_sign_mask, torch.cuda.current_device())
 
     def update_quantized(
         self,
@@ -169,9 +165,7 @@ class NVFP4Quantizer(Quantizer):
         noop_flag: Optional[torch.Tensor] = None,
     ) -> QuantizedTensor:
 
-        assert isinstance(
-            dst, NVFP4Tensor
-        ), f"Cannot store quantized NVFP4 in {type(dst)} type."
+        assert isinstance(dst, NVFP4Tensor), f"Cannot store quantized NVFP4 in {type(dst)} type."
 
         # Make sure input is in expected format
         if not devices_match(src.device, dst.device):
@@ -218,9 +212,7 @@ class NVFP4Quantizer(Quantizer):
             return False
         return True
 
-    def get_scale_shape(
-        self, shape: Iterable[int], columnwise: bool
-    ) -> Tuple[int, int]:
+    def get_scale_shape(self, shape: Iterable[int], columnwise: bool) -> Tuple[int, int]:
         """Calculate the shape of the scaling tensor for NVFP4 1D blockwise quantization.
 
         This method determines the shape of the scaling tensor needed for blockwise quantization,
@@ -249,9 +241,7 @@ class NVFP4Quantizer(Quantizer):
 
         if columnwise:
             outer = round_up_to_nearest_multiple(K, 128)
-            inner = round_up_to_nearest_multiple(
-                math.ceil(M / NVFP4_BLOCK_SCALING_SIZE), 4
-            )
+            inner = round_up_to_nearest_multiple(math.ceil(M / NVFP4_BLOCK_SCALING_SIZE), 4)
             return (outer, inner)
         # rowwise
         outer = round_up_to_nearest_multiple(M, 128)
@@ -332,9 +322,7 @@ class NVFP4Quantizer(Quantizer):
                 scale_shape, dtype=torch.uint8, device=device, pin_memory=pin_memory
             )
             # Allocate per tensor scale inverse. FP32 format.
-            amax_rowwise = torch.zeros(
-                1, dtype=torch.float32, device=device, pin_memory=pin_memory
-            )
+            amax_rowwise = torch.zeros(1, dtype=torch.float32, device=device, pin_memory=pin_memory)
 
         # Allocate FP8 data transpose if needed
         columnwise_data = None
@@ -558,9 +546,7 @@ class NVFP4Tensor(NVFP4TensorStorage, QuantizedTensor):
         # View op
         if func == aten.view.default:
             if len(args) != 2:
-                raise RuntimeError(
-                    "Unexpected args for view op (expected 2 args, got {len(args)})"
-                )
+                raise RuntimeError("Unexpected args for view op (expected 2 args, got {len(args)})")
             tensor = args[0]
             shape = args[1]
             if shape == list(tensor.size()):
@@ -570,9 +556,7 @@ class NVFP4Tensor(NVFP4TensorStorage, QuantizedTensor):
         # NVFP4 dequantize not supported. Add manual support for needed funcs.
         if func in (aten.empty_like.default, aten.zero_.default):
             tensor = args[0]
-            data_init_func = (
-                torch.zeros_like if func == aten.zero_.default else torch.empty_like
-            )
+            data_init_func = torch.zeros_like if func == aten.zero_.default else torch.empty_like
             scale_inv_init_func = (
                 torch.ones_like if func == aten.zero_.default else torch.empty_like
             )
@@ -582,22 +566,16 @@ class NVFP4Tensor(NVFP4TensorStorage, QuantizedTensor):
                 rowwise_scale_inv = scale_inv_init_func(
                     tensor._rowwise_scale_inv, *args[1:], **kwargs
                 )
-                amax_rowwise = torch.zeros_like(
-                    tensor._amax_rowwise, *args[1:], **kwargs
-                )
+                amax_rowwise = torch.zeros_like(tensor._amax_rowwise, *args[1:], **kwargs)
             else:
                 rowwise_data, rowwise_scale_inv, amax_rowwise = None, None, None
 
             if tensor._columnwise_data is not None:
-                columnwise_data = data_init_func(
-                    tensor._columnwise_data, *args[1:], **kwargs
-                )
+                columnwise_data = data_init_func(tensor._columnwise_data, *args[1:], **kwargs)
                 columnwise_scale_inv = scale_inv_init_func(
                     tensor._columnwise_scale_inv, *args[1:], **kwargs
                 )
-                amax_columnwise = torch.zeros_like(
-                    tensor._amax_columnwise, *args[1:], **kwargs
-                )
+                amax_columnwise = torch.zeros_like(tensor._amax_columnwise, *args[1:], **kwargs)
             else:
                 columnwise_data, columnwise_scale_inv, amax_columnwise = (
                     None,
