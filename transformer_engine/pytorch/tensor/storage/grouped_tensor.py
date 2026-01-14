@@ -375,7 +375,9 @@ class GroupedTensor:
             total_elements = sum(s[0] * s[1] for s in shape)
             logical_shape = (1, total_elements)
 
-        no_quantization = quantizers is None or len(quantizers) == 0 or quantizers[0] is None
+        no_quantization = (
+            quantizers is None or len(quantizers) == 0 or quantizers[0] is None
+        )
 
         # TODO(ksivaman): (Do we need multiple quantizers?)
         # Current implementation assumes all tensors have the different quantizers.
@@ -621,8 +623,14 @@ class GroupedTensor:
 
         result = []
 
+        no_quantization = (
+            self.quantizers is None
+            or len(self.quantizers) == 0
+            or self.quantizers[0] is None
+        )
+
         # Case 1: No quantization - return regular torch tensors
-        if self.quantizer is None:
+        if no_quantization:
             for i in range(self.num_tensors):
                 # Get tensor shape
                 tensor_shape = self.shape[i]
@@ -667,7 +675,7 @@ class GroupedTensor:
             return result
 
         # Case 2: Quantized tensors
-        recipe = self.quantizer._get_compatible_recipe()
+        recipe = self.quantizers[0]._get_compatible_recipe()
 
         for i in range(self.num_tensors):
             # Get tensor shape
@@ -691,11 +699,11 @@ class GroupedTensor:
                 rowwise_data = self.data[data_start:data_end].view(tensor_shape)
 
             if self.has_columnwise_data():
-                columnwise_tensor_shape = self.quantizer.get_columnwise_shape(
+                columnwise_tensor_shape = self.quantizers[i].get_columnwise_shape(
                     tensor_shape
                 )
-                if self.quantizer._get_compatible_recipe().nvfp4():
-                    columnwise_tensor_shape = self.quantizer.convert_shape_for_fp4(
+                if self.quantizers[i]._get_compatible_recipe().nvfp4():
+                    columnwise_tensor_shape = self.quantizers[i].convert_shape_for_fp4(
                         columnwise_tensor_shape
                     )
                 columnwise_data = self.columnwise_data[data_start:data_end].view(
@@ -716,7 +724,9 @@ class GroupedTensor:
                         scale_end = self.scale_inv.numel()
 
                     # Calculate expected scale shape for MXFP8
-                    scale_shape = self.quantizer.get_scale_shape(tensor_shape, False)
+                    scale_shape = self.quantizers[i].get_scale_shape(
+                        tensor_shape, False
+                    )
                     rowwise_scale_inv = self.scale_inv[scale_start:scale_end].view(
                         scale_shape
                     )
@@ -731,12 +741,14 @@ class GroupedTensor:
                     else:
                         cscale_end = self.columnwise_scale_inv.numel()
 
-                    cscale_shape = self.quantizer.get_scale_shape(tensor_shape, True)
+                    cscale_shape = self.quantizers[i].get_scale_shape(
+                        tensor_shape, True
+                    )
                     columnwise_scale_inv = self.columnwise_scale_inv[
                         cscale_start:cscale_end
                     ].view(cscale_shape)
 
-                if self.quantizer.internal:
+                if self.quantizers[i].internal:
                     mxfp8_tensor_class = MXFP8TensorStorage
                 else:
                     mxfp8_tensor_class = MXFP8Tensor
@@ -745,8 +757,8 @@ class GroupedTensor:
                     rowwise_scale_inv=rowwise_scale_inv,
                     columnwise_data=columnwise_data,
                     columnwise_scale_inv=columnwise_scale_inv,
-                    fp8_dtype=self.quantizer.dtype,
-                    quantizer=self.quantizer,
+                    fp8_dtype=self.quantizers[i].dtype,
+                    quantizer=self.quantizers[i],
                 )
                 result.append(tensor)
 
@@ -757,7 +769,7 @@ class GroupedTensor:
                 if self.scale_inv is not None:
                     scale_inv = self.scale_inv[i : i + 1]
 
-                if self.quantizer.internal:
+                if self.quantizers[i].internal:
                     float8_tensor_class = Float8TensorStorage
                 else:
                     float8_tensor_class = Float8Tensor
@@ -765,8 +777,8 @@ class GroupedTensor:
                 tensor = float8_tensor_class(
                     data=rowwise_data,
                     fp8_scale_inv=scale_inv,
-                    fp8_dtype=self.quantizer.dtype,
-                    quantizer=self.quantizer,
+                    fp8_dtype=self.quantizers[i].dtype,
+                    quantizer=self.quantizers[i],
                     data_transpose=columnwise_data,
                 )
                 result.append(tensor)
@@ -785,7 +797,9 @@ class GroupedTensor:
                         scale_end = self.scale_inv.numel()
 
                     # Get scale shape from quantizer
-                    scale_shape = self.quantizer.get_scale_shape(tensor_shape, False)
+                    scale_shape = self.quantizers[i].get_scale_shape(
+                        tensor_shape, False
+                    )
                     rowwise_scale_inv = self.scale_inv[scale_start:scale_end].view(
                         scale_shape
                     )
@@ -801,20 +815,22 @@ class GroupedTensor:
                         cscale_end = self.columnwise_scale_inv.numel()
 
                     # Get columnwise scale shape from quantizer
-                    cscale_shape = self.quantizer.get_scale_shape(tensor_shape, True)
+                    cscale_shape = self.quantizers[i].get_scale_shape(
+                        tensor_shape, True
+                    )
                     columnwise_scale_inv = self.columnwise_scale_inv[
                         cscale_start:cscale_end
                     ].view(cscale_shape)
 
                 # Compute is_2D_scaled and data_format from quantizer attributes
-                is_2D_scaled = self.quantizer.block_scaling_dim == 2
+                is_2D_scaled = self.quantizers[i].block_scaling_dim == 2
                 data_format = (
                     Float8BlockScaleTensorFormat.COMPACT
-                    if self.quantizer.all_gather_usage
+                    if self.quantizers[i].all_gather_usage
                     else Float8BlockScaleTensorFormat.GEMM_READY
                 )
 
-                if self.quantizer.internal:
+                if self.quantizers[i].internal:
                     float8_blockwise_q_tensor_class = Float8BlockwiseQTensorStorage
                 else:
                     float8_blockwise_q_tensor_class = Float8BlockwiseQTensor
@@ -824,8 +840,8 @@ class GroupedTensor:
                     rowwise_scale_inv=rowwise_scale_inv,
                     columnwise_data=columnwise_data,
                     columnwise_scale_inv=columnwise_scale_inv,
-                    fp8_dtype=self.quantizer.dtype,
-                    quantizer=self.quantizer,
+                    fp8_dtype=self.quantizers[i].dtype,
+                    quantizer=self.quantizers[i],
                     is_2D_scaled=is_2D_scaled,
                     data_format=data_format,
                 )
@@ -866,7 +882,9 @@ class GroupedTensor:
                         scale_end = self.scale_inv.numel()
 
                     # Get scale shape from quantizer
-                    scale_shape = self.quantizer.get_scale_shape(tensor_shape, False)
+                    scale_shape = self.quantizers[i].get_scale_shape(
+                        tensor_shape, False
+                    )
                     rowwise_scale_inv = self.scale_inv[scale_start:scale_end].view(
                         scale_shape
                     )
@@ -882,7 +900,9 @@ class GroupedTensor:
                         cscale_end = self.columnwise_scale_inv.numel()
 
                     # Get columnwise scale shape from quantizer
-                    cscale_shape = self.quantizer.get_scale_shape(tensor_shape, True)
+                    cscale_shape = self.quantizers[i].get_scale_shape(
+                        tensor_shape, True
+                    )
                     columnwise_scale_inv = self.columnwise_scale_inv[
                         cscale_start:cscale_end
                     ].view(cscale_shape)
@@ -894,7 +914,7 @@ class GroupedTensor:
                 if self.columnwise_amax is not None:
                     amax_columnwise = self.columnwise_amax[i : i + 1]
 
-                if self.quantizer.internal:
+                if self.quantizers[i].internal:
                     nvfp4_tensor_class = NVFP4TensorStorage
                 else:
                     nvfp4_tensor_class = NVFP4Tensor
@@ -906,8 +926,8 @@ class GroupedTensor:
                     columnwise_scale_inv=columnwise_scale_inv,
                     amax_rowwise=amax_rowwise,
                     amax_columnwise=amax_columnwise,
-                    fp4_dtype=self.quantizer.dtype,
-                    quantizer=self.quantizer,
+                    fp4_dtype=self.quantizers[i].dtype,
+                    quantizer=self.quantizers[i],
                 )
                 result.append(tensor)
 
