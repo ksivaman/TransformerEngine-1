@@ -396,6 +396,9 @@ class GroupedTensor:
         scale_inv_offsets = None
         columnwise_scale_inv_offsets = None
         if quantizers is None or len(quantizers) == 0 or quantizers[0] is None:
+            assert (
+                dtype is not None
+            ), "dtype must be provided for unquantized GroupedTensor"
             if rowwise_usage:
                 # Allocate rowwise data buffer (1D flattened, uint8)
                 data = torch.empty(total_elements, dtype=dtype, device=device)
