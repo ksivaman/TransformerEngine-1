@@ -88,33 +88,40 @@ class Recipe:
     Base recipe class.
     """
 
-    def nvfp4(self):
+    @classmethod
+    def nvfp4(cls):
         """Whether the given recipe is NVFP4 1D block scaling."""
-        return isinstance(self, NVFP4BlockScaling)
+        return isinstance(cls, NVFP4BlockScaling)
 
-    def mxfp8(self):
+    @classmethod
+    def mxfp8(cls):
         """Whether the given recipe is MXFP8 block scaling."""
-        return isinstance(self, MXFP8BlockScaling)
+        return isinstance(cls, MXFP8BlockScaling)
 
-    def delayed(self):
+    @classmethod
+    def delayed(cls):
         """Whether the given recipe is delayed scaling."""
-        return isinstance(self, DelayedScaling)
+        return isinstance(cls, DelayedScaling)
 
-    def float8_current_scaling(self):
+    @classmethod
+    def float8_current_scaling(cls):
         """Whether the given recipe is (per-tensor) current scaling."""
-        return isinstance(self, Float8CurrentScaling)
+        return isinstance(cls, Float8CurrentScaling)
 
-    def float8_per_tensor_scaling(self):
+    @classmethod
+    def float8_per_tensor_scaling(cls):
         """Whether the given recipe is per-tensor scaling."""
-        return isinstance(self, (DelayedScaling, Float8CurrentScaling))
+        return isinstance(cls, (DelayedScaling, Float8CurrentScaling))
 
-    def float8_block_scaling(self):
+    @classmethod
+    def float8_block_scaling(cls):
         """Whether the given recipe is float8 blockwise scaling."""
-        return isinstance(self, Float8BlockScaling)
+        return isinstance(cls, Float8BlockScaling)
 
-    def custom(self):
+    @classmethod
+    def custom(cls):
         """Whether the given recipe is custom."""
-        return isinstance(self, CustomRecipe)
+        return isinstance(cls, CustomRecipe)
 
 
 @dataclass()
