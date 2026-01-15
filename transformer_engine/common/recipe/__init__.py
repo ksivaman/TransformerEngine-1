@@ -91,37 +91,37 @@ class Recipe:
     @classmethod
     def nvfp4(cls):
         """Whether the given recipe is NVFP4 1D block scaling."""
-        return isinstance(cls, NVFP4BlockScaling)
+        return issubclass(cls, NVFP4BlockScaling)
 
     @classmethod
     def mxfp8(cls):
         """Whether the given recipe is MXFP8 block scaling."""
-        return isinstance(cls, MXFP8BlockScaling)
+        return issubclass(cls, MXFP8BlockScaling)
 
     @classmethod
     def delayed(cls):
         """Whether the given recipe is delayed scaling."""
-        return isinstance(cls, DelayedScaling)
+        return issubclass(cls, DelayedScaling)
 
     @classmethod
     def float8_current_scaling(cls):
         """Whether the given recipe is (per-tensor) current scaling."""
-        return isinstance(cls, Float8CurrentScaling)
+        return issubclass(cls, Float8CurrentScaling)
 
     @classmethod
     def float8_per_tensor_scaling(cls):
         """Whether the given recipe is per-tensor scaling."""
-        return isinstance(cls, (DelayedScaling, Float8CurrentScaling))
+        return issubclass(cls, (DelayedScaling, Float8CurrentScaling))
 
     @classmethod
     def float8_block_scaling(cls):
         """Whether the given recipe is float8 blockwise scaling."""
-        return isinstance(cls, Float8BlockScaling)
+        return issubclass(cls, Float8BlockScaling)
 
     @classmethod
     def custom(cls):
         """Whether the given recipe is custom."""
-        return isinstance(cls, CustomRecipe)
+        return issubclass(cls, CustomRecipe)
 
 
 @dataclass()

@@ -20,8 +20,8 @@ import transformer_engine_torch as tex
 
 # Check available recipes
 fp8_available, reason_for_no_fp8 = te.is_fp8_available(return_reason=True)
-fp8_block_scaling_available, reason_for_no_fp8_block_scaling = (
-    te.is_fp8_block_scaling_available(return_reason=True)
+fp8_block_scaling_available, reason_for_no_fp8_block_scaling = te.is_fp8_block_scaling_available(
+    return_reason=True
 )
 mxfp8_available, reason_for_no_mxfp8 = te.is_mxfp8_available(return_reason=True)
 nvfp4_available, reason_for_no_nvfp4 = te.is_nvfp4_available(return_reason=True)
@@ -311,15 +311,11 @@ class TestGroupedTensor:
         original_data_ptr = grouped_tensor.data.data_ptr()
         original_scale_inv_ptr = grouped_tensor.scale_inv.data_ptr()
         original_scale_ptr = (
-            grouped_tensor.scale.data_ptr()
-            if grouped_tensor.scale is not None
-            else None
+            grouped_tensor.scale.data_ptr() if grouped_tensor.scale is not None else None
         )
 
         # Create input tensors
-        input_tensors = [
-            torch.randn(s, dtype=torch.float32, device="cuda") for s in shape
-        ]
+        input_tensors = [torch.randn(s, dtype=torch.float32, device="cuda") for s in shape]
 
         # Quantize in place
         quantized_tensors = grouped_tensor.quantize(input_tensors)
@@ -355,9 +351,7 @@ class TestGroupedTensor:
         original_data_ptr = grouped_tensor.data.data_ptr()
 
         # Create input tensors with varying shapes
-        input_tensors = [
-            torch.randn(s, dtype=torch.float32, device="cuda") for s in shape
-        ]
+        input_tensors = [torch.randn(s, dtype=torch.float32, device="cuda") for s in shape]
 
         # Quantize in place
         quantized_tensors = grouped_tensor.quantize(input_tensors)
@@ -381,9 +375,7 @@ class TestGroupedTensor:
         quantizers = make_quantizers(quantization, num_tensors, shape)
 
         # Create input tensors
-        input_tensors = [
-            torch.randn(s, dtype=torch.float32, device="cuda") for s in shape
-        ]
+        input_tensors = [torch.randn(s, dtype=torch.float32, device="cuda") for s in shape]
 
         # Use static quantize method
         grouped_tensor = GroupedTensor.quantize(
