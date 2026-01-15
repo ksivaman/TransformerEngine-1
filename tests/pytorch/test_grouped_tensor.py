@@ -384,7 +384,7 @@ class TestGroupedTensor:
         input_tensors = [torch.randn(s, dtype=torch.float32, device="cuda") for s in shape]
 
         # Use static quantize method
-        grouped_tensor = GroupedTensor.quantize(
+        grouped_tensor = GroupedTensor.create_and_quantize(
             tensors=input_tensors,
             quantizers=quantizers,
             device="cuda",

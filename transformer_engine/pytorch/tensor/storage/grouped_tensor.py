@@ -876,7 +876,7 @@ class GroupedTensor:
         return result
 
     @staticmethod
-    def quantize(
+    def create_and_quantize(
         tensors: int,
         quantizers: None | List[Quantizer],
         *,
