@@ -148,7 +148,10 @@ class _GroupedLinear(torch.autograd.Function):
             # tensors (like scales), but bulk allocation shares storage across all tensors,
             # so if scales can't be offloaded, nothing in the group can be offloaded.
             inputmats = tex.split_quantize(
-                inp_view, m_splits, input_quantizers, disable_bulk_allocation=cpu_offloading
+                inp_view,
+                m_splits,
+                input_quantizers,
+                disable_bulk_allocation=cpu_offloading,
             )
         elif debug:
             inputmats = DebugQuantizer.multi_tensor_quantize(
@@ -624,7 +627,7 @@ class GroupedLinear(TransformerEngineBaseModule):
     ) -> None:
         super().__init__()
 
-        params_dtype = torch.get_default_dtype() if params_dtype is None else params_dtype
+        self.params_dtype = torch.get_default_dtype() if params_dtype is None else params_dtype
         self.num_gemms = num_gemms
         self.in_features = in_features
         self.out_features = out_features
@@ -694,7 +697,7 @@ class GroupedLinear(TransformerEngineBaseModule):
                         self.out_features,
                         self.in_features,
                         device=device,
-                        dtype=params_dtype,
+                        dtype=self.params_dtype,
                     ),
                 ),
                 init_fn=init_method,
@@ -710,13 +713,13 @@ class GroupedLinear(TransformerEngineBaseModule):
                         torch.empty(
                             self.out_features,
                             device=device,
-                            dtype=params_dtype,
+                            dtype=self.params_dtype,
                         ),
                     ),
                     init_fn=init_method_constant(0.0),
                 )
             else:
-                bias = torch.Tensor().to(dtype=params_dtype, device=device)
+                bias = torch.Tensor().to(dtype=self.params_dtype, device=device)
                 setattr(self, f"bias{i}", bias)
 
         if self.primary_weights_in_fp8:
@@ -761,7 +764,7 @@ class GroupedLinear(TransformerEngineBaseModule):
             num_tensors=self.num_gemms,
             shape=[(self.out_features, self.in_features)] * self.num_gemms,
             quantizers=weight_quantizers,
-            dtype=weights[0].dtype if weight_quantizers[0] is None else None,
+            dtype=self.params_dtype,
         )
 
         # Copy existing params into storage.

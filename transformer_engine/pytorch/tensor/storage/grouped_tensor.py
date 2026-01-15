@@ -60,6 +60,7 @@ class GroupedTensor:
         num_tensors: int,
         shape: List[Tuple[int, int]],
         quantizers: List[Optional[Quantizer]] = None,
+        dtype: Optional[torch.dtype] = None,
         data: Optional[torch.Tensor] = None,
         columnwise_data: Optional[torch.Tensor] = None,
         scale_inv: Optional[torch.Tensor] = None,
@@ -98,6 +99,9 @@ class GroupedTensor:
         self.num_tensors = num_tensors
         self.quantizers = quantizers
         self.shape = shape
+        self.dtype = (
+            dtype if dtype is not None else torch.float32
+        )  # Default to float32 if not provided
 
         # Data buffers
         self.data = data
@@ -234,18 +238,15 @@ class GroupedTensor:
         # For both uniform and varying first dim cases: logical_shape[1] is the common last dim
         return self.logical_shape[1]
 
-    def dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """
-        Get the data type of the tensor.
+        Get the high precision data type of the tensor.
 
         Returns:
-            The dtype of the data buffer
+            The high precision dtype of the data buffer
         """
-        if not self.has_data() and self.has_columnwise_data():
-            return self.columnwise_data.dtype
-        if self.data is not None:
-            return self.data.dtype
-        return torch.float32  # Default
+
+        return self.dtype
 
     def clear(self) -> None:
         """
@@ -264,6 +265,10 @@ class GroupedTensor:
         self.logical_shape = (0, 0)
         self.num_tensors = 0
         self.quantizers = None
+        self.quantized_tensors = None
+        self.offsets = None
+        self.scale_inv_offsets = None
+        self.columnwise_scale_inv_offsets = None
 
     def __repr__(self) -> str:
         """String representation of the GroupedTensor."""
@@ -271,7 +276,7 @@ class GroupedTensor:
             f"GroupedTensor(num_tensors={self.num_tensors}, "
             f"shape={self.shape}, "
             f"logical_shape={self.logical_shape}, "
-            f"dtype={self.dtype()})"
+            f"dtype={self.get_dtype()})"
         )
 
     def __str__(self) -> str:
@@ -289,7 +294,7 @@ class GroupedTensor:
             f"GroupedTensor with {self.num_tensors} tensors "
             f"({', '.join(shape_info) if shape_info else 'uniform'}), "
             f"logical_shape={self.logical_shape}, "
-            f"dtype={self.dtype()}"
+            f"dtype={self.get_dtype()}"
         )
 
     @staticmethod
@@ -548,6 +553,7 @@ class GroupedTensor:
         grouped_tensor = GroupedTensor(
             num_tensors=num_tensors,
             shape=shape,
+            dtype=dtype,
             quantizers=quantizers,
             data=data,
             columnwise_data=columnwise_data,
@@ -645,16 +651,26 @@ class GroupedTensor:
                 data_start = i * numel
                 data_end = data_start + numel
 
+            # Special shape handling for NVFP4.
+            nvfp4 = self.quantizers[i]._get_compatible_recipe().nvfp4()
+            if nvfp4:
+                data_start = data_start // 2
+                data_end = data_end // 2
+
             # Extract rowwise and columnwise data
             rowwise_data = None
             columnwise_data = None
 
             if self.has_data():
-                rowwise_data = self.data[data_start:data_end].view(tensor_shape)
+                if nvfp4:
+                    rowwise_tensor_shape = self.quantizers[i].convert_shape_for_fp4(tensor_shape)
+                else:
+                    rowwise_tensor_shape = tensor_shape
+                rowwise_data = self.data[data_start:data_end].view(rowwise_tensor_shape)
 
             if self.has_columnwise_data():
                 columnwise_tensor_shape = self.quantizers[i].get_columnwise_shape(tensor_shape)
-                if self.quantizers[i]._get_compatible_recipe().nvfp4():
+                if nvfp4:
                     columnwise_tensor_shape = self.quantizers[i].convert_shape_for_fp4(
                         columnwise_tensor_shape
                     )
@@ -699,6 +715,8 @@ class GroupedTensor:
                 else:
                     mxfp8_tensor_class = MXFP8Tensor
                 tensor = mxfp8_tensor_class(
+                    shape=tensor_shape,
+                    dtype=self.dtype,
                     rowwise_data=rowwise_data,
                     rowwise_scale_inv=rowwise_scale_inv,
                     columnwise_data=columnwise_data,
@@ -721,6 +739,8 @@ class GroupedTensor:
                     float8_tensor_class = Float8Tensor
 
                 tensor = float8_tensor_class(
+                    shape=tensor_shape,
+                    dtype=self.dtype,
                     data=rowwise_data,
                     fp8_scale_inv=scale_inv,
                     fp8_dtype=self.quantizers[i].dtype,
@@ -776,6 +796,8 @@ class GroupedTensor:
                     float8_blockwise_q_tensor_class = Float8BlockwiseQTensor
 
                 tensor = float8_blockwise_q_tensor_class(
+                    shape=tensor_shape,
+                    dtype=self.dtype,
                     rowwise_data=rowwise_data,
                     rowwise_scale_inv=rowwise_scale_inv,
                     columnwise_data=columnwise_data,
@@ -789,23 +811,6 @@ class GroupedTensor:
 
             # NVFP4 format
             elif recipe.nvfp4():
-                # For NVFP4, data is packed (2 values per byte)
-                # Recalculate data slices in packed format
-                packed_rowwise_data = None
-                packed_columnwise_data = None
-
-                if self.has_data():
-                    # Data offsets are in unpacked elements, convert to packed bytes
-                    packed_start = data_start // 2
-                    packed_end = data_end // 2
-                    packed_rowwise_data = self.data[packed_start:packed_end]
-
-                if self.has_columnwise_data():
-                    # Columnwise data also packed
-                    packed_start = data_start // 2
-                    packed_end = data_end // 2
-                    packed_columnwise_data = self.columnwise_data[packed_start:packed_end]
-
                 # Extract scale_inv data
                 rowwise_scale_inv = None
                 columnwise_scale_inv = None
@@ -852,9 +857,11 @@ class GroupedTensor:
                     nvfp4_tensor_class = NVFP4Tensor
 
                 tensor = nvfp4_tensor_class(
-                    rowwise_data=packed_rowwise_data,
+                    shape=tensor_shape,
+                    dtype=self.dtype,
+                    rowwise_data=rowwise_data,
                     rowwise_scale_inv=rowwise_scale_inv,
-                    columnwise_data=packed_columnwise_data,
+                    columnwise_data=columnwise_data,
                     columnwise_scale_inv=columnwise_scale_inv,
                     amax_rowwise=amax_rowwise,
                     amax_columnwise=amax_columnwise,
@@ -908,7 +915,7 @@ class GroupedTensor:
         Quantize the GroupedTensor inplace.
         """
 
-        quantized_tensors = self.split_into_quantized_tensors(noop_flag=noop_flag)
+        quantized_tensors = self.split_into_quantized_tensors()
         for i in range(self.num_tensors):
             self.quantizers[i].update_quantized(
                 tensors[i], quantized_tensors[i], noop_flag=noop_flag

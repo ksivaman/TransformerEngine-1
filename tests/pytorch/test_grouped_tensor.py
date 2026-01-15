@@ -90,7 +90,7 @@ def make_quantizers(quantization: str, num_tensors: int, shape: List[Tuple[int, 
         else:
             raise ValueError(f"Unknown quantization scheme: {quantization}")
 
-        quantizer.internal = True
+        quantizer.internal = False
         quantizers.append(quantizer)
 
     return quantizers
@@ -121,7 +121,7 @@ class TestGroupedTensor:
     def test_basic_construction_all_same_shape(self) -> None:
         """Test GroupedTensor construction with all tensors having same shape"""
         num_tensors = 4
-        shape = [(16, 32) for _ in range(num_tensors)]
+        shape = [(256, 512) for _ in range(num_tensors)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -135,15 +135,15 @@ class TestGroupedTensor:
         assert grouped_tensor.all_same_shape()
         assert grouped_tensor.all_same_first_dim()
         assert grouped_tensor.all_same_last_dim()
-        assert grouped_tensor.logical_shape == (num_tensors * 16, 32)
-        assert grouped_tensor.get_common_first_dim() == 16
-        assert grouped_tensor.get_common_last_dim() == 32
+        assert grouped_tensor.logical_shape == (num_tensors * 256, 512)
+        assert grouped_tensor.get_common_first_dim() == 256
+        assert grouped_tensor.get_common_last_dim() == 512
         assert grouped_tensor.has_data()
 
     def test_basic_construction_varying_first_dim(self) -> None:
         """Test GroupedTensor construction with varying first dimension"""
         num_tensors = 3
-        shape = [(8, 32), (16, 32), (24, 32)]
+        shape = [(128, 512), (256, 512), (384, 512)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -157,13 +157,16 @@ class TestGroupedTensor:
         assert not grouped_tensor.all_same_shape()
         assert not grouped_tensor.all_same_first_dim()
         assert grouped_tensor.all_same_last_dim()
-        assert grouped_tensor.logical_shape == (48, 32)  # sum of first dims
-        assert grouped_tensor.get_common_last_dim() == 32
+        assert grouped_tensor.get_common_last_dim() == shape[0][1]
+        assert grouped_tensor.logical_shape == (
+            sum(v for v, _ in shape),
+            shape[0][1],
+        )  # sum of first dims
 
     def test_basic_construction_varying_last_dim(self) -> None:
         """Test GroupedTensor construction with varying last dimension"""
         num_tensors = 3
-        shape = [(16, 8), (16, 16), (16, 24)]
+        shape = [(512, 128), (512, 256), (512, 384)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -177,13 +180,16 @@ class TestGroupedTensor:
         assert not grouped_tensor.all_same_shape()
         assert grouped_tensor.all_same_first_dim()
         assert not grouped_tensor.all_same_last_dim()
-        assert grouped_tensor.logical_shape == (16, 48)  # sum of last dims
-        assert grouped_tensor.get_common_first_dim() == 16
+        assert grouped_tensor.get_common_first_dim() == shape[0][0]
+        assert grouped_tensor.logical_shape == (
+            shape[0][0],
+            sum(v for _, v in shape),
+        )  # sum of last dims
 
     def test_basic_construction_varying_both_dims(self) -> None:
         """Test GroupedTensor construction with varying both dimensions"""
         num_tensors = 3
-        shape = [(8, 16), (12, 20), (16, 24)]
+        shape = [(128, 256), (256, 384), (384, 512)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -204,7 +210,7 @@ class TestGroupedTensor:
     def test_split_into_quantized_tensors_no_quantization(self) -> None:
         """Test split_into_quantized_tensors for unquantized tensors"""
         num_tensors = 3
-        shape = [(16, 32) for _ in range(num_tensors)]
+        shape = [(256, 512) for _ in range(num_tensors)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -240,7 +246,7 @@ class TestGroupedTensor:
     def test_split_into_quantized_tensors_quantized(self, quantization: str) -> None:
         """Test split_into_quantized_tensors for quantized tensors"""
         num_tensors = 3
-        shape = [(32, 32) for _ in range(num_tensors)]
+        shape = [(512, 512) for _ in range(num_tensors)]
         quantizers = make_quantizers(quantization, num_tensors, shape)
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
@@ -270,7 +276,7 @@ class TestGroupedTensor:
     def test_split_varying_shapes(self) -> None:
         """Test split_into_quantized_tensors with varying shapes"""
         num_tensors = 3
-        shape = [(8, 32), (16, 32), (24, 32)]
+        shape = [(128, 512), (256, 512), (384, 512)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -297,7 +303,7 @@ class TestGroupedTensor:
     def test_quantize_inplace(self, quantization: str) -> None:
         """Test that quantize is done in-place for all recipes"""
         num_tensors = 3
-        shape = [(32, 32) for _ in range(num_tensors)]
+        shape = [(512, 512) for _ in range(num_tensors)]
         quantizers = make_quantizers(quantization, num_tensors, shape)
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
@@ -337,7 +343,7 @@ class TestGroupedTensor:
     def test_quantize_varying_shapes(self, quantization: str) -> None:
         """Test quantize with varying shapes"""
         num_tensors = 3
-        shape = [(32, 32), (64, 32), (96, 32)]
+        shape = [(256, 512), (512, 512), (768, 512)]
         quantizers = make_quantizers(quantization, num_tensors, shape)
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
@@ -371,7 +377,7 @@ class TestGroupedTensor:
     def test_static_quantize_method(self, quantization: str) -> None:
         """Test the static quantize method"""
         num_tensors = 3
-        shape = [(32, 32) for _ in range(num_tensors)]
+        shape = [(512, 512) for _ in range(num_tensors)]
         quantizers = make_quantizers(quantization, num_tensors, shape)
 
         # Create input tensors
@@ -402,7 +408,7 @@ class TestGroupedTensor:
     def test_clear(self) -> None:
         """Test clear method"""
         num_tensors = 3
-        shape = [(16, 32) for _ in range(num_tensors)]
+        shape = [(256, 512) for _ in range(num_tensors)]
 
         grouped_tensor = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
