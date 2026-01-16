@@ -948,7 +948,8 @@ class GroupedTensorWrapper {
    */
   GroupedTensorWrapper(const size_t num_tensors, const std::vector<size_t> &logical_shape,
                        const NVTEScalingMode scaling_mode = NVTE_DELAYED_TENSOR_SCALING)
-      : GroupedTensorWrapper(num_tensors, nvte_make_shape(logical_shape.data(), logical_shape.size()),
+      : GroupedTensorWrapper(num_tensors,
+                             nvte_make_shape(logical_shape.data(), logical_shape.size()),
                              scaling_mode) {}
 
   /*! \brief GroupedTensorWrapper destructor. */
@@ -988,7 +989,8 @@ class GroupedTensorWrapper {
   }
 
   template <typename ShapeType>
-  GroupedTensorWrapper &set_columnwise_data(void *dptr, DType type, const ShapeType &shape) noexcept {
+  GroupedTensorWrapper &set_columnwise_data(void *dptr, DType type,
+                                            const ShapeType &shape) noexcept {
     return set_parameter(kNVTEGroupedColumnwiseData, dptr, type, shape);
   }
 
@@ -1015,7 +1017,8 @@ class GroupedTensorWrapper {
   }
 
   template <typename ShapeType>
-  GroupedTensorWrapper &set_columnwise_amax(void *dptr, DType type, const ShapeType &shape) noexcept {
+  GroupedTensorWrapper &set_columnwise_amax(void *dptr, DType type,
+                                            const ShapeType &shape) noexcept {
     return set_parameter(kNVTEGroupedColumnwiseAmax, dptr, type, shape);
   }
 
@@ -1030,7 +1033,8 @@ class GroupedTensorWrapper {
   }
 
   template <typename ShapeType>
-  GroupedTensorWrapper &set_tensor_offsets(void *dptr, DType type, const ShapeType &shape) noexcept {
+  GroupedTensorWrapper &set_tensor_offsets(void *dptr, DType type,
+                                           const ShapeType &shape) noexcept {
     return set_parameter(kNVTEGroupedTensorOffsets, dptr, type, shape);
   }
 
@@ -1039,7 +1043,9 @@ class GroupedTensorWrapper {
     return nvte_get_grouped_tensor_param(tensor_, param);
   }
 
-  NVTEBasicTensor get_rowwise_data() const noexcept { return get_parameter(kNVTEGroupedRowwiseData); }
+  NVTEBasicTensor get_rowwise_data() const noexcept {
+    return get_parameter(kNVTEGroupedRowwiseData);
+  }
 
   NVTEBasicTensor get_columnwise_data() const noexcept {
     return get_parameter(kNVTEGroupedColumnwiseData);
