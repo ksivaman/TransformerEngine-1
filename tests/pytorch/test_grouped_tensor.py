@@ -16,6 +16,7 @@ from transformer_engine.pytorch import (
     MXFP8Quantizer,
     NVFP4Quantizer,
 )
+from transformer_engine.pytorch.constants import TE_DType_To_Torch
 import transformer_engine_torch as tex
 
 # Check available recipes
@@ -404,6 +405,64 @@ class TestGroupedTensor:
             numel = shape[i][0] * shape[i][1]
             expected_offset = _rowwise_offset_bytes(i * numel, quantization)
             assert rowwise_data.data_ptr() == original_data_ptr + expected_offset
+
+    @pytest.mark.skipif(not mxfp8_available, reason=reason_for_no_mxfp8)
+    def test_quantize_grouped_mxfp8(self) -> None:
+        """Test grouped quantization for MXFP8 against per-tensor quantization."""
+        num_tensors = 2
+        shape = [(512, 1024) for _ in range(num_tensors)]
+
+        # Create BF16 input tensors and pack into a grouped tensor
+        input_tensors = [
+            torch.randn(s, dtype=torch.bfloat16, device="cuda") for s in shape
+        ]
+        quantized_tensors = [MXFP8Quantizer(fp8_dtype=tex.DType.kFloat8E4M3)(tensor) for tensor in input_tensors]
+        import pdb; pdb.set_trace()
+        grouped_input = GroupedTensor.make_grouped_tensor(
+            num_tensors=num_tensors,
+            shape=shape,
+            quantizers=None,
+            device="cuda",
+            dtype=torch.bfloat16,
+        )
+
+        offset = 0
+        for tensor in input_tensors:
+            numel = tensor.numel()
+            grouped_input.data[offset : offset + numel].copy_(tensor.reshape(-1))
+            offset += numel
+
+        # Create MXFP8 output grouped tensor (rowwise only for easier validation)
+        quantizers = [
+            MXFP8Quantizer(fp8_dtype=tex.DType.kFloat8E4M3)
+            for _ in range(num_tensors)
+        ]
+        # for quantizer in quantizers:
+        #     quantizer.internal = False
+
+        grouped_output = GroupedTensor.make_grouped_tensor(
+            num_tensors=num_tensors,
+            shape=shape,
+            quantizers=quantizers,
+            device="cuda",
+        )
+
+        # Quantize using grouped API (handle both 2-arg and 3-arg bindings)
+        _ = tex.quantize_grouped(grouped_input, grouped_output)
+        # Build expected output by quantizing each tensor independently
+        expected_data = []
+        expected_scale_inv = []
+        for tensor, quantizer in zip(input_tensors, quantizers):
+            qtensor = quantizer(tensor)
+            expected_data.append(qtensor._rowwise_data.reshape(-1))
+            expected_scale_inv.append(qtensor._rowwise_scale_inv.reshape(-1))
+
+        expected_data = torch.cat(expected_data)
+        expected_scale_inv = torch.cat(expected_scale_inv)
+        import pdb; pdb.set_trace()
+
+        assert torch.equal(grouped_output.data, expected_data)
+        assert torch.equal(grouped_output.scale_inv, expected_scale_inv)
 
     def test_clear(self) -> None:
         """Test clear method"""
