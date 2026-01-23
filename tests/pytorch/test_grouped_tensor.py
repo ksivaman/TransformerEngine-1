@@ -62,6 +62,7 @@ def make_quantizers(quantization: str, num_tensors: int, shape: List[Tuple[int, 
                 scale=torch.ones(1, dtype=torch.float32, device="cuda"),
                 amax=torch.zeros(1, dtype=torch.float32, device="cuda"),
                 fp8_dtype=tex.DType.kFloat8E4M3,
+
             )
         elif quantization == "fp8_current_scaling":
             quantizer = Float8CurrentScalingQuantizer(
@@ -437,8 +438,6 @@ class TestGroupedTensor:
             MXFP8Quantizer(fp8_dtype=tex.DType.kFloat8E4M3)
             for _ in range(num_tensors)
         ]
-        # for quantizer in quantizers:
-        #     quantizer.internal = False
 
         grouped_output = GroupedTensor.make_grouped_tensor(
             num_tensors=num_tensors,
@@ -459,7 +458,6 @@ class TestGroupedTensor:
 
         expected_data = torch.cat(expected_data)
         expected_scale_inv = torch.cat(expected_scale_inv)
-        import pdb; pdb.set_trace()
 
         assert torch.equal(grouped_output.data, expected_data)
         assert torch.equal(grouped_output.scale_inv, expected_scale_inv)
