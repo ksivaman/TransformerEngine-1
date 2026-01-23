@@ -410,6 +410,7 @@ class TestGroupedTensor:
     @pytest.mark.skipif(not mxfp8_available, reason=reason_for_no_mxfp8)
     def test_quantize_grouped_mxfp8(self) -> None:
         """Test grouped quantization for MXFP8 against per-tensor quantization."""
+        # Test wont pass until the grouped quantization PR from Oleg is merged.
         num_tensors = 2
         shape = [(512, 1024) for _ in range(num_tensors)]
 

@@ -86,10 +86,10 @@ py::object quantize_grouped(const py::handle &input, py::handle& output) {
 
   const auto &grouped_input_tensor = GroupedTensorFromPyTorchGroupedTensor(input);
   const auto &grouped_output_tensor = GroupedTensorFromPyTorchGroupedTensor(output);
-
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_grouped(grouped_input_tensor.data(), grouped_output_tensor.data(), at::cuda::getCurrentCUDAStream());
-  });
+  // TODO: Uncomment this when the grouped quantization PR from Oleg is merged.
+  // NVTE_SCOPED_GIL_RELEASE({
+  //   nvte_quantize_grouped(grouped_input_tensor.data(), grouped_output_tensor.data(), at::cuda::getCurrentCUDAStream());
+  // });
 
   return py::reinterpret_borrow<py::object>(output);
 }
