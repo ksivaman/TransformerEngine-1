@@ -718,6 +718,18 @@ inline cublasLtMatmulAlgo_t select_grouped_gemm_algo(cublasLtHandle_t handle,
   NVTE_CHECK_CUBLAS(cublasLtMatmulPreferenceSetAttribute(
       &preference, CUBLASLT_MATMUL_PREF_GROUPED_AVERAGE_REDUCTION_DIM, &avg_k, sizeof(int64_t)));
 
+  // Set minimum alignment hints for grouped GEMM
+  // For batched pointers, each matrix may have different alignment, so use conservative value
+  uint32_t min_alignment = 16;  // 16 bytes is safe for FP8 (128-bit aligned)
+  NVTE_CHECK_CUBLAS(cublasLtMatmulPreferenceSetAttribute(
+      &preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_A_BYTES, &min_alignment, sizeof(min_alignment)));
+  NVTE_CHECK_CUBLAS(cublasLtMatmulPreferenceSetAttribute(
+      &preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_B_BYTES, &min_alignment, sizeof(min_alignment)));
+  NVTE_CHECK_CUBLAS(cublasLtMatmulPreferenceSetAttribute(
+      &preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_C_BYTES, &min_alignment, sizeof(min_alignment)));
+  NVTE_CHECK_CUBLAS(cublasLtMatmulPreferenceSetAttribute(
+      &preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_D_BYTES, &min_alignment, sizeof(min_alignment)));
+
   cublasLtMatmulHeuristicResult_t heuristicResult;
   int returnedResults = 0;
   auto status = cublasLtMatmulAlgoGetHeuristic(handle, &matmulDesc, &descA, &descB, &descC, &descD,
