@@ -33,7 +33,7 @@ std::vector<size_t> get_tensor_shape(const TensorWrapper &tensor) {
 }  // namespace
 
 py::object quantize(const at::Tensor &tensor, py::handle quantizer, const py::object &output,
-                    std::optional<at::Tensor> noop_flag) {
+                    std::optional<at::Tensor> noop_flag, std::optional<at::Tensor> block_amax_out) {
   // Convert quantizer to C++ object
   auto quantizer_cpp = convert_quantizer(quantizer);
 
@@ -74,7 +74,7 @@ py::object quantize(const at::Tensor &tensor, py::handle quantizer, const py::ob
     auto *quantizer_cs = dynamic_cast<Float8CurrentScalingQuantizer *>(quantizer_cpp.get());
     quantizer_cs->quantize_with_amax(input_cpp, output_cpp, noop_flag_cpp);
   } else {
-    quantizer_cpp->quantize(input_cpp, output_cpp, noop_flag_cpp);
+    quantizer_cpp->quantize(input_cpp, output_cpp, noop_flag_cpp, block_amax_out);
   }
 
   return output_py;

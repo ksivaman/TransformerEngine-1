@@ -113,7 +113,8 @@ class Quantizer {
 
   /*! @brief Convert to a quantized data format */
   virtual void quantize(const TensorWrapper& input, TensorWrapper& out,
-                        const std::optional<TensorWrapper>& noop_flag = std::nullopt) = 0;
+                        const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                        const std::optional<at::Tensor>& block_amax_out = std::nullopt) = 0;
 
   virtual ~Quantizer() = default;
 
@@ -145,7 +146,8 @@ class NoneQuantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> convert_and_update_tensor(py::object tensor) const override;
 
   void quantize(const TensorWrapper& input, TensorWrapper& out,
-                const std::optional<TensorWrapper>& noop_flag = std::nullopt) override;
+                const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                const std::optional<at::Tensor>& block_amax_out = std::nullopt) override;
 };
 
 class Float8Quantizer : public Quantizer {
@@ -173,7 +175,8 @@ class Float8Quantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> convert_and_update_tensor(py::object shape) const override;
 
   void quantize(const TensorWrapper& input, TensorWrapper& out,
-                const std::optional<TensorWrapper>& noop_flag = std::nullopt) override;
+                const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                const std::optional<at::Tensor>& block_amax_out = std::nullopt) override;
 };
 
 class Float8CurrentScalingQuantizer : public Quantizer {
@@ -207,7 +210,8 @@ class Float8CurrentScalingQuantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> convert_and_update_tensor(py::object shape) const override;
 
   void quantize(const TensorWrapper& input, TensorWrapper& out,
-                const std::optional<TensorWrapper>& noop_flag = std::nullopt) override;
+                const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                const std::optional<at::Tensor>& block_amax_out = std::nullopt) override;
 
   /*! @brief Quantize to FP8, skipping local amax computation
    *
@@ -256,7 +260,8 @@ class Float8BlockQuantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> convert_and_update_tensor(py::object shape) const override;
 
   void quantize(const TensorWrapper& input, TensorWrapper& out,
-                const std::optional<TensorWrapper>& noop_flag = std::nullopt) override;
+                const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                const std::optional<at::Tensor>& block_amax_out = std::nullopt) override;
 
   std::vector<size_t> get_scale_shape(const std::vector<size_t>& shape, bool columnwise) const;
 };
@@ -277,7 +282,8 @@ class MXFP8Quantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> convert_and_update_tensor(py::object shape) const override;
 
   void quantize(const TensorWrapper& input, TensorWrapper& out,
-                const std::optional<TensorWrapper>& noop_flag = std::nullopt) override;
+                const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                const std::optional<at::Tensor>& block_amax_out = std::nullopt) override;
 
   std::vector<size_t> get_scale_shape(const std::vector<size_t>& shape, bool columnwise) const;
 };
@@ -319,7 +325,8 @@ class NVFP4Quantizer : public Quantizer {
   std::pair<TensorWrapper, py::object> convert_and_update_tensor(py::object shape) const override;
 
   void quantize(const TensorWrapper& input, TensorWrapper& out,
-                const std::optional<TensorWrapper>& noop_flag = std::nullopt) override;
+                const std::optional<TensorWrapper>& noop_flag = std::nullopt,
+                const std::optional<at::Tensor>& block_amax_out = std::nullopt) override;
 
   /*! @brief Quantize to NVFP4, skipping local amax computation
    *
@@ -333,7 +340,8 @@ class NVFP4Quantizer : public Quantizer {
 
  private:
   void quantize_impl(const TensorWrapper& input, TensorWrapper& out,
-                     const std::optional<TensorWrapper>& noop_flag, bool compute_amax);
+                     const std::optional<TensorWrapper>& noop_flag, bool compute_amax,
+                     const std::optional<at::Tensor>& block_amax_out = std::nullopt);
 };
 
 std::unique_ptr<Quantizer> convert_quantizer(py::handle quantizer);

@@ -37,14 +37,19 @@ void nvte_hadamard_transform(const NVTETensor input, NVTETensor output, int rand
  *
  *  This function is experimental and the API is not stable.
  *
- *  \param[in]      input              Input tensor to apply Hadamard transform.
- *  \param[in,out]  output             Output tensor.
- *  \param[in]      random_sign_mask   16-bit sign mask.
- *  \param[in]      random_sign_mask_t 16-bit sign mask.
- *  \param[in]      stream             CUDA stream used for the operation.
+ *  \param[in]      input                        Input tensor to apply Hadamard transform.
+ *  \param[in,out]  output                       Output tensor.
+ *  \param[in]      random_sign_mask            16-bit sign mask.
+ *  \param[in]      random_sign_mask_t          16-bit sign mask.
+ *  \param[in]      stream                       CUDA stream used for the operation.
+ *  \param[out]     pre_rht_amax_per_block       Optional device buffer to receive pre-RHT amax
+ *                                               per CTA (block). When non-NULL, must have at least
+ *                                               (DIVUP(row_length, 128) * DIVUP(num_rows, 128))
+ *                                               elements. Pass NULL to omit.
  */
 void nvte_hadamard_transform_amax(const NVTETensor input, NVTETensor output, int random_sign_mask,
-                                  int random_sign_mask_t, cudaStream_t stream);
+                                  int random_sign_mask_t, cudaStream_t stream,
+                                  float* pre_rht_amax_per_block);
 
 /*! \brief Perform the columnwise hadamard transform cast fusion.
  *

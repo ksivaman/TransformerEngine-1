@@ -163,6 +163,7 @@ class NVFP4Quantizer(Quantizer):
         dst: QuantizedTensor,
         *,
         noop_flag: Optional[torch.Tensor] = None,
+        block_amax_out: Optional[torch.Tensor] = None,
     ) -> QuantizedTensor:
 
         assert isinstance(dst, NVFP4Tensor), f"Cannot store quantized NVFP4 in {type(dst)} type."
@@ -174,7 +175,7 @@ class NVFP4Quantizer(Quantizer):
             src = src.contiguous()
 
         # Launch cast kernel
-        tex.quantize(src, self, dst, noop_flag)
+        tex.quantize(src, self, dst, noop_flag, block_amax_out)
 
         return dst
 
@@ -475,6 +476,7 @@ class NVFP4Tensor(NVFP4TensorStorage, QuantizedTensor):
         tensor: torch.Tensor,
         *,
         noop_flag: Optional[torch.Tensor] = None,
+        block_amax_out: Optional[torch.Tensor] = None,
     ) -> NVFP4Tensor:
         """Update FP8 data
 
@@ -484,11 +486,18 @@ class NVFP4Tensor(NVFP4TensorStorage, QuantizedTensor):
             Tensor to copy from
         noop_flag: torch.Tensor, optional
             float32 flag indicating whether to avoid performing update
+        block_amax_out: torch.Tensor, optional
+            Optional output tensor to store per-block (CTA) pre-RHT amaxes when using
+            RHT with post-RHT amax. Must be contiguous float32 CUDA tensor with
+            at least (DIVUP(rows, 128) * DIVUP(cols, 128)) elements for 2D shape
+            (rows, cols). Default None (do not output block amaxes).
 
         """
         if isinstance(tensor, QuantizedTensor):
             return self.quantize_(tensor.dequantize())
-        self._get_quantizer().update_quantized(tensor, self, noop_flag=noop_flag)
+        self._get_quantizer().update_quantized(
+            tensor, self, noop_flag=noop_flag, block_amax_out=block_amax_out
+        )
         return self
 
     def detach(self) -> NVFP4Tensor:
