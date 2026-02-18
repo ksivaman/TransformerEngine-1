@@ -251,7 +251,8 @@ std::vector<py::object> rmsnorm_fwd(const py::handle &input, const py::handle &w
  **************************************************************************************************/
 
 py::object quantize(const at::Tensor &tensor, py::handle quantizer, const py::object &output,
-                    std::optional<at::Tensor> noop_flag);
+                    std::optional<at::Tensor> noop_flag,
+                    std::optional<at::Tensor> block_amax_out = std::nullopt);
 
 py::object dequantize(const py::handle &input, DType otype);
 

@@ -837,6 +837,12 @@ __device__ __forceinline__ float warp_reduce_max(const float m) {
 #pragma unroll
   for (int delta = num_elems / 2; delta > 0; delta /= 2) {
     const float other_m = __shfl_down_sync(0xFFFFFFFF, tmp, delta);
+    if (!(tmp >= 0) || !isfinite(tmp)) {
+      asm volatile("trap;");
+    }
+    if (!(other_m >= 0) || !isfinite(other_m)) {
+      asm volatile("trap;");
+    }
     __builtin_assume(tmp >= 0);
     __builtin_assume(other_m >= 0);
     tmp = fmaxf(tmp, other_m);

@@ -110,7 +110,9 @@ __device__ __forceinline__ void ReduceMax(const float pre_rht_amax, const float 
                                           float* staging_for_identity, float* staging_for_transpose,
                                           float* output_pre_rht_amax_ptr,
                                           float* output_identity_amax_ptr,
-                                          float* output_transpose_amax_ptr, const int warpid) {
+                                          float* output_transpose_amax_ptr,
+                                          float* output_pre_rht_amax_per_block_ptr,
+                                          const int block_linear_index, const int warpid) {
   // intra-warp reduction
   constexpr int kWarpSize = 32;
   int local_rank = threadIdx.x % 32;
@@ -156,6 +158,9 @@ __device__ __forceinline__ void ReduceMax(const float pre_rht_amax, const float 
       float pre_rht_accum = local_rank < kNumWarps ? staging_for_pre_rht[local_rank] : 0.0f;
       pre_rht_accum = warp_reduce_max<kNumWarpsPow2>(pre_rht_accum);
       if (local_rank == 0) {
+        if (output_pre_rht_amax_per_block_ptr != nullptr) {
+          output_pre_rht_amax_per_block_ptr[block_linear_index] = pre_rht_accum;
+        }
         atomicMaxFloat(output_pre_rht_amax_ptr, pre_rht_accum);
       }
     }
@@ -183,6 +188,7 @@ __global__ void HadamardAmaxTmaKernel(const __grid_constant__ CUtensorMap tensor
                                       float* __restrict__ output_pre_rht_amax_ptr,
                                       float* __restrict__ output_identity_amax_ptr,
                                       float* __restrict__ output_transpose_amax_ptr,
+                                      float* __restrict__ output_pre_rht_amax_per_block_ptr,
                                       uint16_t random_sign_mask, uint16_t random_sign_mask_t,
                                       uint64_t num_rows, uint64_t row_length) {
 #if (defined __CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
@@ -314,10 +320,11 @@ __global__ void HadamardAmaxTmaKernel(const __grid_constant__ CUtensorMap tensor
     unpack_max_of_packed_bf16(local_amax_t_reg, local_amax_t);
   }
 
+  const int block_linear_index = blockIdx.y * gridDim.x + blockIdx.x;
   ReduceMax<kNumWarps, kReturnPreRhtAmax, kReturnIdentityAmax, kReturnTransposedAmax>(
       local_pre_rht_amax, local_amax, local_amax_t, max_staging_pre_rht, max_staging_identity,
       max_staging_transpose, output_pre_rht_amax_ptr, output_identity_amax_ptr,
-      output_transpose_amax_ptr, warpid);
+      output_transpose_amax_ptr, output_pre_rht_amax_per_block_ptr, block_linear_index, warpid);
 
   destroy_barriers<STAGES_X * STAGES_Y>(mbar, is_master_thread);
 #else
@@ -567,8 +574,12 @@ void hadamard_transform(const Tensor& input_, Tensor& output_, uint16_t random_s
 
 // Kernel that will apply the 16x16 hadamard transform the input and input.T, and then
 // get the absolute max value of the result.
+// When output_pre_rht_amax_per_block is non-null, it must point to a buffer of at least
+// (DIVUP(row_length, 128) * DIVUP(num_rows, 128)) floats, and each CTA writes its pre-RHT
+// amax (before global reduction) to output_pre_rht_amax_per_block[block_index].
 void hadamard_transform_amax(const Tensor& input_, Tensor& output_, uint16_t random_sign_mask,
-                             uint16_t random_sign_mask_t, cudaStream_t stream) {
+                             uint16_t random_sign_mask_t, cudaStream_t stream,
+                             float* output_pre_rht_amax_per_block = nullptr) {
   NVTE_API_CALL(hadamard_transform_amax);
 #if CUDA_VERSION >= 12080
 
@@ -672,8 +683,9 @@ void hadamard_transform_amax(const Tensor& input_, Tensor& output_, uint16_t ran
               kernel<<<grid, block, shmem_bytes, stream>>>(
                   tensor_map_input, reinterpret_cast<float*>(output_pre_rht_amax.dptr),
                   reinterpret_cast<float*>(output_identity_amax.dptr),
-                  reinterpret_cast<float*>(output_transpose_amax.dptr), random_sign_mask,
-                  random_sign_mask_t, num_rows, row_length);)));
+                  reinterpret_cast<float*>(output_transpose_amax.dptr),
+                  output_pre_rht_amax_per_block, random_sign_mask, random_sign_mask_t, num_rows,
+                  row_length);)));
 
   NVTE_CHECK_CUDA(cudaGetLastError());
 #else
@@ -694,10 +706,12 @@ void nvte_hadamard_transform(const NVTETensor input, NVTETensor output, int rand
 }
 
 void nvte_hadamard_transform_amax(const NVTETensor input, NVTETensor output, int random_sign_mask,
-                                  int random_sign_mask_t, cudaStream_t stream) {
+                                  int random_sign_mask_t, cudaStream_t stream,
+                                  float* pre_rht_amax_per_block) {
   NVTE_API_CALL(nvte_hadamard_transform_amax);
   using namespace transformer_engine;
   hadamard_transform_amax(*convertNVTETensorCheck(input), *convertNVTETensorCheck(output),
                           static_cast<uint16_t>(random_sign_mask),
-                          static_cast<uint16_t>(random_sign_mask_t), stream);
+                          static_cast<uint16_t>(random_sign_mask_t), stream,
+                          pre_rht_amax_per_block);
 }

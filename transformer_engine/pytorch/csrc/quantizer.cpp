@@ -100,7 +100,8 @@ std::pair<TensorWrapper, py::object> NoneQuantizer::convert_and_update_tensor(
 }
 
 void NoneQuantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-                             const std::optional<TensorWrapper>& noop_flag) {
+                             const std::optional<TensorWrapper>& noop_flag,
+                             const std::optional<at::Tensor>& block_amax_out) {
   NVTE_ERROR("NoneQuantizer does not support quantization");
 }
 
@@ -276,7 +277,8 @@ std::pair<TensorWrapper, py::object> Float8Quantizer::convert_and_update_tensor(
 }
 
 void Float8Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-                               const std::optional<TensorWrapper>& noop_flag) {
+                               const std::optional<TensorWrapper>& noop_flag,
+                               const std::optional<at::Tensor>& block_amax_out) {
   if (input.numel() == 0) {
     return;
   }
@@ -538,7 +540,8 @@ void Float8CurrentScalingQuantizer::quantize_impl(const TensorWrapper& input, Te
 }
 
 void Float8CurrentScalingQuantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-                                             const std::optional<TensorWrapper>& noop_flag) {
+                                             const std::optional<TensorWrapper>& noop_flag,
+                                             const std::optional<at::Tensor>& block_amax_out) {
   this->quantize_impl(input, out, noop_flag, true);
 }
 
@@ -782,7 +785,8 @@ std::pair<TensorWrapper, py::object> Float8BlockQuantizer::convert_and_update_te
 }
 
 void Float8BlockQuantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-                                    const std::optional<TensorWrapper>& noop_flag) {
+                                    const std::optional<TensorWrapper>& noop_flag,
+                                    const std::optional<at::Tensor>& block_amax_out) {
   if (input.numel() == 0) {
     return;
   }
@@ -1051,7 +1055,8 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::convert_and_update_tensor(
 }
 
 void MXFP8Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-                              const std::optional<TensorWrapper>& noop_flag) {
+                              const std::optional<TensorWrapper>& noop_flag,
+                              const std::optional<at::Tensor>& block_amax_out) {
   if (input.numel() == 0) {
     return;
   }
@@ -1411,8 +1416,8 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
 }
 
 void NVFP4Quantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& out,
-                                   const std::optional<TensorWrapper>& noop_flag,
-                                   bool compute_amax) {
+                                   const std::optional<TensorWrapper>& noop_flag, bool compute_amax,
+                                   const std::optional<at::Tensor>& block_amax_out) {
   // Nothing to be done if input is empty
   if (input.numel() == 0) {
     return;
@@ -1481,9 +1486,22 @@ void NVFP4Quantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& ou
       // We need:
       // 1. Rowwise amax = amax for input
       // 2. Columnwise amax = amax for RHT(input.t)
+      float* pre_rht_amax_per_block_ptr = nullptr;
+      if (block_amax_out.has_value()) {
+        const size_t num_blocks = ((cols + 127) / 128) * ((rows + 127) / 128);
+        NVTE_CHECK(block_amax_out->numel() >= static_cast<int64_t>(num_blocks),
+                   "block_amax_out must have at least ", num_blocks, " elements (got ",
+                   block_amax_out->numel(), ")");
+        NVTE_CHECK(block_amax_out->scalar_type() == torch::kFloat32,
+                   "block_amax_out must be float32");
+        NVTE_CHECK(block_amax_out->is_contiguous() && block_amax_out->is_cuda(),
+                   "block_amax_out must be a contiguous CUDA tensor");
+        pre_rht_amax_per_block_ptr = block_amax_out->data_ptr<float>();
+      }
       NVTE_SCOPED_GIL_RELEASE({
         nvte_hadamard_transform_amax(input.data(), out.data(), 0,
-                                     this->rht_matrix_random_sign_mask_t, stream);
+                                     this->rht_matrix_random_sign_mask_t, stream,
+                                     pre_rht_amax_per_block_ptr);
       });
     } else {
       // raise error since it's not supported yet
@@ -1641,8 +1659,9 @@ void NVFP4Quantizer::quantize_impl(const TensorWrapper& input, TensorWrapper& ou
 }
 
 void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-                              const std::optional<TensorWrapper>& noop_flag) {
-  this->quantize_impl(input, out, noop_flag, true);
+                              const std::optional<TensorWrapper>& noop_flag,
+                              const std::optional<at::Tensor>& block_amax_out) {
+  this->quantize_impl(input, out, noop_flag, true, block_amax_out);
 }
 
 void NVFP4Quantizer::quantize_with_amax(TensorWrapper& input, TensorWrapper& out) {

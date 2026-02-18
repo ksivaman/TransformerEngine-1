@@ -57,7 +57,7 @@ Error_Type RHTAmaxCalculationFFI(cudaStream_t stream, Buffer_Type input_buf, Res
   // Zero'ing of amaxes is handled by TE common inside nvte_hadamard_transform_amax
   nvte_hadamard_transform_amax(input_tensor.data(), out_tensor.data(),
                                0,  // Regular amax for rowwise does not apply RHT so mask is 0
-                               rht_matrix_random_sign_mask_t, stream);
+                               rht_matrix_random_sign_mask_t, stream, nullptr);
 
   return ffi_with_cuda_error_check();
 }
