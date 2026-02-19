@@ -34,6 +34,7 @@ enum class InputCase {
   kFP8Current,
   kBF16,
   kMXFP8,
+  kNVFP4,
 };
 
 enum class ShapeCase {
@@ -146,6 +147,104 @@ Tensor make_mxfp8_operand(const std::string& name, const std::vector<size_t>& sh
   return mxfp8_swizzled;
 }
 
+// Helper: quantize BF16 tensor to NVFP4 rowwise-only, swizzle scales, return swizzled tensor.
+Tensor make_nvfp4_rowwise(const std::string& name, const std::vector<size_t>& shape) {
+  Tensor input_bf16(name + "_bf16", shape, DType::kBFloat16);
+  fillUniform(&input_bf16);
+
+  Tensor nvfp4(name, shape, DType::kFloat4E2M1, /*rowwise=*/true, /*columnwise=*/false,
+               NVTE_NVFP4_1D_SCALING);
+
+  // Allocate amax on the tensor so nvte_quantize_v2 fills it with max(|input|).
+  // This enables per-group alpha computation in grouped GEMM.
+  // Note: small leak (Tensor destructor doesn't free amax for NVFP4) — acceptable in test.
+  float *amax_ptr;
+  NVTE_CHECK_CUDA(cudaMalloc(&amax_ptr, sizeof(float)));
+  NVTE_CHECK_CUDA(cudaMemset(amax_ptr, 0, sizeof(float)));
+  {
+    size_t one = 1;
+    NVTEBasicTensor amax_bt = {amax_ptr, kNVTEFloat32, nvte_make_shape(&one, 1)};
+    NVTETensor h = nvfp4.data();
+    nvte_set_tensor_param(&h, kNVTEAmax, &amax_bt);
+  }
+
+  QuantizationConfigWrapper quant_config;
+  nvte_quantize_v2(input_bf16.data(), nvfp4.data(), quant_config, 0);
+
+  Tensor nvfp4_sw(name + "_sw", shape, DType::kFloat4E2M1,
+                  /*rowwise=*/true, /*columnwise=*/false, NVTE_NVFP4_1D_SCALING);
+  nvfp4_sw.set_with_gemm_swizzled_scales(true);
+  size_t data_bytes = test::bytes(nvfp4.rowwise_shape(), nvfp4.dtype());
+  NVTE_CHECK_CUDA(cudaMemcpy(nvfp4_sw.rowwise_dptr(), nvfp4.rowwise_dptr(),
+                             data_bytes, cudaMemcpyDeviceToDevice));
+  nvte_swizzle_scaling_factors(nvfp4.data(), nvfp4_sw.data(), 0);
+  NVTE_CHECK_CUDA(cudaDeviceSynchronize());
+  return nvfp4_sw;
+}
+
+// Creates an NVFP4 operand with both rowwise and columnwise data, swizzled scales.
+// NVFP4 "columnwise" data is the transposed tensor quantized rowwise.
+// We quantize rowwise directly, and for columnwise we quantize the transposed input rowwise.
+Tensor make_nvfp4_operand(const std::string& name, const std::vector<size_t>& shape,
+                          bool is_A, bool transposed) {
+  (void)is_A;
+  (void)transposed;
+
+  // 1. Rowwise: quantize + swizzle directly
+  Tensor rowwise = make_nvfp4_rowwise(name + "_row", shape);
+
+  // 2. Columnwise: transpose input, quantize + swizzle as rowwise of transposed shape
+  std::vector<size_t> t_shape = {shape[1], shape[0]};
+  Tensor colwise = make_nvfp4_rowwise(name + "_col", t_shape);
+
+  // 3. Assemble: both-layout tensor with rowwise from (1) and columnwise from (2)
+  Tensor result(name, shape, DType::kFloat4E2M1, /*rowwise=*/true, /*columnwise=*/true,
+                NVTE_NVFP4_1D_SCALING);
+  result.set_with_gemm_swizzled_scales(true);
+
+  // Copy rowwise data + scale from rowwise tensor
+  {
+    size_t data_bytes = test::bytes(rowwise.rowwise_shape(), rowwise.dtype());
+    NVTE_CHECK_CUDA(cudaMemcpy(result.rowwise_dptr(), rowwise.rowwise_dptr(),
+                               data_bytes, cudaMemcpyDeviceToDevice));
+    size_t scale_bytes = test::bytes(rowwise.rowwise_scale_inv_shape(), DType::kFloat8E4M3);
+    NVTE_CHECK_CUDA(cudaMemcpy(
+        nvte_get_tensor_param(result.data(), kNVTERowwiseScaleInv).data_ptr,
+        nvte_get_tensor_param(rowwise.data(), kNVTERowwiseScaleInv).data_ptr,
+        scale_bytes, cudaMemcpyDeviceToDevice));
+  }
+
+  // Copy colwise data + scale from transposed-rowwise tensor
+  // The rowwise data of transposed shape IS the columnwise data of original shape
+  {
+    size_t data_bytes = test::bytes(colwise.rowwise_shape(), colwise.dtype());
+    NVTE_CHECK_CUDA(cudaMemcpy(result.columnwise_dptr(), colwise.rowwise_dptr(),
+                               data_bytes, cudaMemcpyDeviceToDevice));
+    size_t scale_bytes = test::bytes(colwise.rowwise_scale_inv_shape(), DType::kFloat8E4M3);
+    NVTE_CHECK_CUDA(cudaMemcpy(
+        nvte_get_tensor_param(result.data(), kNVTEColumnwiseScaleInv).data_ptr,
+        nvte_get_tensor_param(colwise.data(), kNVTERowwiseScaleInv).data_ptr,
+        scale_bytes, cudaMemcpyDeviceToDevice));
+  }
+
+  // Copy amax from rowwise/colwise tensors to result
+  // Rowwise amax → result.amax (used when transa=T)
+  // Colwise amax → result.columnwise_amax (used when transa=N)
+  {
+    NVTEBasicTensor row_amax = nvte_get_tensor_param(rowwise.data(), kNVTEAmax);
+    NVTETensor h = result.data();
+    nvte_set_tensor_param(&h, kNVTEAmax, &row_amax);
+  }
+  {
+    NVTEBasicTensor col_amax = nvte_get_tensor_param(colwise.data(), kNVTEAmax);
+    NVTETensor h = result.data();
+    nvte_set_tensor_param(&h, kNVTEColumnwiseAmax, &col_amax);
+  }
+
+  NVTE_CHECK_CUDA(cudaDeviceSynchronize());
+  return result;
+}
+
 struct TestParams {
   InputCase input_case;
   bool transa;
@@ -215,6 +314,13 @@ void run_grouped_gemm_case(const TestParams& params) {
         A_tensors.emplace_back(make_mxfp8_operand("A" + std::to_string(i), a_shape,
                                                   /*is_A=*/true, params.transa));
         B_tensors.emplace_back(make_mxfp8_operand("B" + std::to_string(i), b_shape,
+                                                  /*is_A=*/false, params.transb));
+        break;
+      }
+      case InputCase::kNVFP4: {
+        A_tensors.emplace_back(make_nvfp4_operand("A" + std::to_string(i), a_shape,
+                                                  /*is_A=*/true, params.transa));
+        B_tensors.emplace_back(make_nvfp4_operand("B" + std::to_string(i), b_shape,
                                                   /*is_A=*/false, params.transb));
         break;
       }
@@ -359,7 +465,7 @@ TEST_P(GroupedGemmTest, CompareWithMultiTensorGemm) {
 }
 
 std::string MakeGroupedGemmTestName(const testing::TestParamInfo<GroupedGemmTest::ParamType>& info) {
-  constexpr const char* kInputNames[] = {"FP8Current", "BF16", "MXFP8"};
+  constexpr const char* kInputNames[] = {"FP8Current", "BF16", "MXFP8", "NVFP4"};
   constexpr const char* kShapeNames[] = {"AllSame", "SameM", "SameN", "AllDiff"};
   const std::string layout = std::string("ta") + (info.param.transa ? "T" : "N") +
                              "tb" + (info.param.transb ? "T" : "N");
@@ -391,6 +497,17 @@ const std::vector<TestParams> kTestParams = {
     {InputCase::kMXFP8, false, false, ShapeCase::kSameFirst, false},
     // MXFP8 with NULL C
     {InputCase::kMXFP8, true, false, ShapeCase::kAllSame, true},
+    // NVFP4 tests (all transpose combinations - GEMM internally forces TN)
+    {InputCase::kNVFP4, true, false, ShapeCase::kAllSame, false},
+    {InputCase::kNVFP4, true, false, ShapeCase::kAllDifferent, false},
+    {InputCase::kNVFP4, true, false, ShapeCase::kSameFirst, false},
+    {InputCase::kNVFP4, true, false, ShapeCase::kSameLast, false},
+    {InputCase::kNVFP4, false, true, ShapeCase::kAllSame, false},
+    {InputCase::kNVFP4, false, true, ShapeCase::kAllDifferent, false},
+    {InputCase::kNVFP4, false, false, ShapeCase::kAllSame, false},
+    {InputCase::kNVFP4, false, false, ShapeCase::kAllDifferent, false},
+    // NVFP4 with NULL C
+    {InputCase::kNVFP4, true, false, ShapeCase::kAllSame, true},
 };
 
 INSTANTIATE_TEST_SUITE_P(OperatorTest,

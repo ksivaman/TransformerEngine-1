@@ -130,14 +130,17 @@ struct GroupedGemmSetupWorkspace {
   int *b_cols;
   int *d_rows;  // M (first dim) - also used for C
   int *d_cols;  // N (last dim) - also used for C
+  // NVFP4: per-group computed alpha values (alpha * amax_A * amax_B * factor_inv)
+  float *computed_alpha;
 
   // Initialize from workspace buffer
-  // Layout: all pointer arrays first (16-byte aligned for cuBLAS), then int arrays
+  // Layout: all pointer arrays first (16-byte aligned for cuBLAS), then int arrays, then float arrays
   static GroupedGemmSetupWorkspace from_buffers(char *setup_ws_ptr, size_t num_tensors) {
     GroupedGemmSetupWorkspace ws;
     size_t offset = 0;
     const size_t ptr_size = num_tensors * sizeof(void *);
     const size_t int_size = num_tensors * sizeof(int);
+    const size_t float_size = num_tensors * sizeof(float);
     constexpr size_t kPtrAlignment = 16;  // cuBLAS requires 16-byte alignment for pointer arrays
 
     // Helper to align offset to kPtrAlignment
@@ -184,6 +187,10 @@ struct GroupedGemmSetupWorkspace {
     ws.d_rows = reinterpret_cast<int *>(setup_ws_ptr + offset);
     offset += int_size;
     ws.d_cols = reinterpret_cast<int *>(setup_ws_ptr + offset);
+    offset += int_size;
+
+    // Float array for NVFP4 computed alpha (4-byte aligned)
+    ws.computed_alpha = reinterpret_cast<float *>(setup_ws_ptr + offset);
 
     return ws;
   }
@@ -192,12 +199,12 @@ struct GroupedGemmSetupWorkspace {
   static size_t required_setup_size(size_t num_tensors, size_t alignment) {
     const size_t ptr_size = num_tensors * sizeof(void *);
     const size_t int_size = num_tensors * sizeof(int);
+    const size_t float_size = num_tensors * sizeof(float);
     constexpr size_t kPtrAlignment = 16;  // Must match from_buffers
 
-    // Layout: 8 ptr arrays (each 16-byte aligned), then 6 int arrays
-    // Each ptr array takes ptr_size bytes but needs to start at 16-byte boundary
+    // Layout: 8 ptr arrays (each 16-byte aligned), then 6 int arrays, then 1 float array
     auto aligned_ptr_size = ((ptr_size + kPtrAlignment - 1) / kPtrAlignment) * kPtrAlignment;
-    size_t size = 8 * aligned_ptr_size + 6 * int_size;
+    size_t size = 8 * aligned_ptr_size + 6 * int_size + float_size;
     size = ((size + alignment - 1) / alignment) * alignment;
     return size;
   }
@@ -223,7 +230,8 @@ inline size_t validate_grouped_gemm_inputs(
     return dtype == transformer_engine::DType::kFloat8E4M3 ||
            dtype == transformer_engine::DType::kFloat8E5M2 ||
            dtype == transformer_engine::DType::kBFloat16 ||
-           dtype == transformer_engine::DType::kFloat16;
+           dtype == transformer_engine::DType::kFloat16 ||
+           dtype == transformer_engine::DType::kFloat4E2M1;
   };
   bool dtype_ok = true;
   for (const auto *tensor : inputs) {
@@ -556,6 +564,7 @@ inline GroupedOperandSelection select_grouped_operand(const transformer_engine::
 
   const auto sm = t->scaling_mode;
   const bool mxfp8 = is_mxfp_scaling(sm);
+  const bool nvfp4 = is_nvfp_scaling(sm);
 
   // Validate scaling mode
   NVTE_CHECK(sm == NVTE_DELAYED_TENSOR_SCALING || mxfp8,
@@ -921,7 +930,14 @@ __global__ void setup_grouped_gemm_kernel(
   }
 
   // Fill alpha/beta pointers (per-matrix)
-  alpha_ptrs[idx] = alpha_ptr + idx;
+  // For NVFP4 with amax: compute per-group alpha that includes global scale
+  if (a_amax && b_amax && computed_alpha) {
+    constexpr float factor_inv = 1.0f / (6.0f * 6.0f * 448.0f * 448.0f);
+    computed_alpha[idx] = alpha_ptr[idx] * a_amax[idx] * b_amax[idx] * factor_inv;
+    alpha_ptrs[idx] = &computed_alpha[idx];
+  } else {
+    alpha_ptrs[idx] = alpha_ptr + idx;
+  }
   beta_ptrs[idx] = beta_ptr + idx;
 
   // Fill scale pointers (per-matrix).
@@ -951,7 +967,10 @@ __global__ void setup_grouped_gemm_kernel(
 // Launch the setup kernel to populate workspace arrays
 inline void launch_grouped_gemm_setup(
     const GroupedGemmSetupWorkspace &ws, const GroupedOperandSelection &A_sel,
-    const GroupedOperandSelection &B_sel, const transformer_engine::GroupedTensor *C,
+    const GroupedOperandSelection &B_sel,
+    const transformer_engine::GroupedTensor *inputA,
+    const transformer_engine::GroupedTensor *inputB,
+    const transformer_engine::GroupedTensor *C,
     const transformer_engine::GroupedTensor *D, const transformer_engine::Tensor *alpha_tensor,
     const transformer_engine::Tensor *beta_tensor, size_t num_tensors, cudaStream_t stream,
     const MultiTensorGroupGemmInputArgs &a_multi_tensor_args, const NVTETensor *C_list,
@@ -1051,6 +1070,14 @@ void nvte_grouped_gemm(const NVTEGroupedTensor A, int transa, const NVTEGroupedT
   const size_t num_tensors = validate_grouped_gemm_inputs(inputA->num_tensors, {inputA, inputB},
                                                           alpha_tensor, beta_tensor);
   validate_grouped_gemm_outputs(num_tensors, {inputC_raw, outputD});
+
+  // NVFP4-specific output dtype restrictions (matching non-grouped GEMM)
+  const bool use_fp4 = is_fp4_dtype(inputA->dtype()) || is_fp4_dtype(inputB->dtype());
+  if (use_fp4) {
+    NVTE_CHECK(!is_fp4_dtype(outputD->dtype()), "FP4 GEMM output is not supported!");
+    NVTE_CHECK(get_cuda_dtype(outputD->dtype()) != CUDA_R_16F,
+               "FP4 GEMM does not support FP16 output!");
+  }
 
   // If C is NULL, use D as C (valid when beta=0, cuBLAS won't read C data)
   const GroupedTensor *inputC = (inputC_raw != nullptr) ? inputC_raw : outputD;

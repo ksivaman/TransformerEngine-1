@@ -1071,9 +1071,16 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
                                       : tensors[0]->columnwise_shape();
   const DType dtype = tensors[0]->dtype();
   const size_t num_tensors = tensors.size();
-  const size_t elem_size = typeToNumBits(dtype) / 8;
+  const size_t bits_per_elem = typeToNumBits(dtype);
+  const bool is_sub_byte = (bits_per_elem < 8);
+  const size_t elem_size = is_sub_byte ? 0 : bits_per_elem / 8;
   GroupedBuffers grouped;
-  grouped.elem_size = elem_size;
+  grouped.elem_size = elem_size;  // Only used for D output extraction (always >= 1 byte dtype)
+
+  // Helper: convert element count to byte count (handles sub-byte types like FP4)
+  auto elems_to_bytes = [bits_per_elem](int64_t elems) -> size_t {
+    return static_cast<size_t>((elems * static_cast<int64_t>(bits_per_elem)) / 8);
+  };
   grouped.num_tensors = num_tensors;
   grouped.dtype = dtype;
   grouped.scaling_mode = scaling_mode;
@@ -1102,9 +1109,14 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
     // cuBLAS requires aligned pointers for vectorized loads
     static std::mt19937 gen(12345);
     std::uniform_int_distribution<int64_t> dist(0, 3);
-    // Calculate elements needed for 16-byte alignment in bytes, rounded up
-    const size_t align_elements =
-        std::max<size_t>(1, (16 + elem_size - 1) / elem_size);  // 16 bytes / element_size
+    // Calculate elements needed for 16-byte alignment
+    size_t align_elements;
+    if (is_sub_byte) {
+      // Sub-byte types (e.g. FP4): 16 bytes = 16*8/bits_per_elem elements
+      align_elements = (16 * 8) / bits_per_elem;
+    } else {
+      align_elements = std::max<size_t>(1, (16 + elem_size - 1) / elem_size);
+    }
     return dist(gen) * static_cast<int64_t>(align_elements);
   };
 
@@ -1153,7 +1165,7 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
   const int64_t total_elems = need_offsets
                                   ? (offsets[last_idx] + numel(last_idx))
                                   : (logical_first * logical_last);
-  const size_t total_bytes = static_cast<size_t>(total_elems) * elem_size;
+  const size_t total_bytes = elems_to_bytes(total_elems);
 
   NVTEGroupedTensor h = grouped.handle.get();
 
@@ -1163,8 +1175,8 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
   if (has_rowwise) {
     grouped.data = cuda_alloc(total_bytes);
     for (size_t i = 0; i < num_tensors; ++i) {
-      const size_t offset_bytes = static_cast<size_t>(offsets[i]) * elem_size;
-      NVTE_CHECK_CUDA(cudaMemcpy(static_cast<char*>(grouped.data.get()) + offset_bytes,
+      const size_t offset_bytes_i = elems_to_bytes(offsets[i]);
+      NVTE_CHECK_CUDA(cudaMemcpy(static_cast<char*>(grouped.data.get()) + offset_bytes_i,
                                  tensors[i]->rowwise_dptr(),
                                  grouped.tensor_bytes[i],
                                  cudaMemcpyDeviceToDevice));
@@ -1177,8 +1189,8 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
   if (has_columnwise) {
     grouped.columnwise_data = cuda_alloc(total_bytes);
     for (size_t i = 0; i < num_tensors; ++i) {
-      const size_t offset_bytes = static_cast<size_t>(offsets[i]) * elem_size;
-      NVTE_CHECK_CUDA(cudaMemcpy(static_cast<char*>(grouped.columnwise_data.get()) + offset_bytes,
+      const size_t offset_bytes_i = elems_to_bytes(offsets[i]);
+      NVTE_CHECK_CUDA(cudaMemcpy(static_cast<char*>(grouped.columnwise_data.get()) + offset_bytes_i,
                                  tensors[i]->columnwise_dptr(),
                                  grouped.tensor_bytes[i],
                                  cudaMemcpyDeviceToDevice));
@@ -1299,6 +1311,99 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
     const uint8_t swizzled = 1;
     nvte_set_grouped_tensor_param(h, kNVTEGroupedWithGEMMSwizzledScales, &swizzled,
                                   sizeof(swizzled));
+  } else if (scaling_mode == NVTE_NVFP4_1D_SCALING) {
+    // NVFP4: E4M3 scale_inv per block of 16 elements (swizzled for GEMM)
+    // Scale layout: [roundup(rows, 128), roundup(cols/16, 4)] E4M3 bytes per tensor
+    auto gather_nvfp4_scales = [&](
+        auto get_shape_fn,
+        auto get_cpu_ptr_fn) -> std::pair<CudaPtr<>, size_t> {
+      size_t total_scale_bytes = 0;
+      std::vector<size_t> scale_byte_offsets(num_tensors);
+      std::vector<size_t> scale_numels(num_tensors);
+
+      for (size_t i = 0; i < num_tensors; ++i) {
+        scale_byte_offsets[i] = total_scale_bytes;
+        const NVTEShape sshape = get_shape_fn(tensors[i]);
+        size_t scale_numel = 1;
+        for (size_t d = 0; d < sshape.ndim; ++d) {
+          scale_numel *= sshape.data[d];
+        }
+        scale_numels[i] = scale_numel;
+        total_scale_bytes += scale_numel;  // E4M3 is 1 byte per element
+      }
+
+      CudaPtr<> buffer = cuda_alloc(total_scale_bytes);
+      for (size_t i = 0; i < num_tensors; ++i) {
+        tensors[i]->to_cpu();
+        NVTE_CHECK_CUDA(cudaGetLastError());
+        void* dst = static_cast<char*>(buffer.get()) + scale_byte_offsets[i];
+        const void* src = get_cpu_ptr_fn(tensors[i]);
+        NVTE_CHECK_CUDA(cudaMemcpy(dst, src, scale_numels[i], cudaMemcpyHostToDevice));
+      }
+      return {std::move(buffer), total_scale_bytes};
+    };
+
+    // Gather rowwise scale_inv if available
+    if (has_rowwise) {
+      auto [row_buffer, row_total] = gather_nvfp4_scales(
+          [](Tensor* t) { return t->rowwise_scale_inv_shape(); },
+          [](Tensor* t) -> const void* { return t->rowwise_cpu_scale_inv_ptr<fp8e4m3>(); });
+      grouped.scale_inv = std::move(row_buffer);
+
+      NVTEShape row_shape = nvte_make_shape(&row_total, 1);
+      NVTEBasicTensor row_tensor{grouped.scale_inv.get(), kNVTEFloat8E4M3, row_shape};
+      nvte_set_grouped_tensor_param(h, kNVTEGroupedRowwiseScaleInv, &row_tensor, sizeof(row_tensor));
+    }
+
+    // Gather columnwise scale_inv if available
+    if (has_columnwise) {
+      auto [col_buffer, col_total] = gather_nvfp4_scales(
+          [](Tensor* t) { return t->columnwise_scale_inv_shape(); },
+          [](Tensor* t) -> const void* { return t->columnwise_cpu_scale_inv_ptr<fp8e4m3>(); });
+      grouped.columnwise_scale_inv = std::move(col_buffer);
+
+      NVTEShape col_shape = nvte_make_shape(&col_total, 1);
+      NVTEBasicTensor col_tensor{grouped.columnwise_scale_inv.get(), kNVTEFloat8E4M3, col_shape};
+      nvte_set_grouped_tensor_param(h, kNVTEGroupedColumnwiseScaleInv, &col_tensor, sizeof(col_tensor));
+    }
+
+    // Mark as having swizzled scales (required for NVFP4 GEMM)
+    nvte_set_grouped_tensor_swizzled_scales(h, 1);
+
+    // Gather per-tensor amax values for NVFP4 global scale computation
+    auto gather_amax = [&](NVTETensorParam param) -> CudaPtr<> {
+      // Check if first tensor has this amax
+      NVTEBasicTensor first_amax = nvte_get_tensor_param(tensors[0]->data(), param);
+      if (first_amax.data_ptr == nullptr) return CudaPtr<>();
+
+      std::vector<float> amax_cpu(num_tensors);
+      for (size_t i = 0; i < num_tensors; ++i) {
+        NVTEBasicTensor amax_bt = nvte_get_tensor_param(tensors[i]->data(), param);
+        NVTE_CHECK(amax_bt.data_ptr != nullptr, "Tensor ", i, " is missing amax");
+        float val;
+        NVTE_CHECK_CUDA(cudaMemcpy(&val, amax_bt.data_ptr, sizeof(float), cudaMemcpyDeviceToHost));
+        amax_cpu[i] = val;
+      }
+      CudaPtr<> dev = cuda_alloc(sizeof(float) * num_tensors);
+      NVTE_CHECK_CUDA(cudaMemcpy(dev.get(), amax_cpu.data(),
+                                 sizeof(float) * num_tensors, cudaMemcpyHostToDevice));
+      return dev;
+    };
+
+    grouped.amax_dev = gather_amax(kNVTEAmax);
+    if (grouped.amax_dev.get()) {
+      NVTEShape amax_shape = nvte_make_shape(&num_tensors, 1);
+      NVTEBasicTensor amax_tensor{grouped.amax_dev.get(), kNVTEFloat32, amax_shape};
+      nvte_set_grouped_tensor_param(h, kNVTEGroupedAmax, &amax_tensor, sizeof(amax_tensor));
+    }
+
+    grouped.columnwise_amax_dev = gather_amax(kNVTEColumnwiseAmax);
+    if (grouped.columnwise_amax_dev.get()) {
+      NVTEShape amax_shape = nvte_make_shape(&num_tensors, 1);
+      NVTEBasicTensor amax_tensor{grouped.columnwise_amax_dev.get(), kNVTEFloat32, amax_shape};
+      nvte_set_grouped_tensor_param(h, kNVTEGroupedColumnwiseAmax, &amax_tensor, sizeof(amax_tensor));
+    }
+
   }
 
   return grouped;
