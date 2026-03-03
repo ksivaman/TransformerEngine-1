@@ -5,6 +5,7 @@
 import argparse
 import datetime
 import os
+import tempfile
 import subprocess
 import sys
 import pathlib
@@ -958,6 +959,33 @@ def run_parallel_tests() -> None:
     dist.destroy_process_group()
 
 
+def run_parallel_nvfp4_partial_cast_test() -> None:
+    """Run the NVFP4 partial-cast distributed worker test."""
+    WORLD_RANK = int(os.getenv("RANK", "0"))
+    WORLD_SIZE = int(os.getenv("WORLD_SIZE", "1"))
+    LOCAL_RANK = int(os.getenv("LOCAL_RANK", "0"))
+    LOCAL_SIZE = int(os.getenv("LOCAL_WORLD_SIZE", "1"))
+
+    assert WORLD_SIZE == LOCAL_SIZE  # this test supports only 1 node
+    assert LOCAL_SIZE <= torch.cuda.device_count()
+    dist_init_kwargs = {
+        "backend": "nccl",
+        "rank": WORLD_RANK,
+        "world_size": WORLD_SIZE,
+        "timeout": datetime.timedelta(seconds=30),
+    }
+    dist_init_kwargs["init_method"] = "env://"
+    dist_init_kwargs["device_id"] = torch.device(f"cuda:{LOCAL_RANK}")
+    assert dist.is_nccl_available()
+    torch.cuda.set_device(LOCAL_RANK)
+    dist.init_process_group(**dist_init_kwargs)
+    dp_group = dist.new_group(backend="nccl")
+
+    _test_nvfp4_partial_cast_matches_full(dp_group)
+
+    dist.destroy_process_group()
+
+
 @pytest.mark.skipif(
     torch.cuda.device_count() < 2, reason="cast_master_weights_to_fp8 test needs at least 2 GPUs."
 )
@@ -983,9 +1011,16 @@ def test_cast_master_weights_to_fp8(world_size: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--parallel", action="store_true", help="Run parallel tests")
+    parser.add_argument(
+        "--parallel-nvfp4-partial",
+        action="store_true",
+        help="Run NVFP4 partial-cast distributed worker test",
+    )
     args = parser.parse_args()
     if args.parallel:
         run_parallel_tests()
+    elif args.parallel_nvfp4_partial:
+        run_parallel_nvfp4_partial_cast_test()
 
 
 # Debugging tests for NVFP4
@@ -1061,27 +1096,11 @@ def test_nvfp4_transpose_kernel() -> None:
     )
 
 
-def test_nvfp4_partial_cast_matches_full() -> None:
-    """Test multi-GPU partial cast: split master weight, partial cast on each rank, all-gather, compare."""
-    WORLD_RANK = int(os.getenv("RANK", "0"))
-    WORLD_SIZE = int(os.getenv("WORLD_SIZE", "1"))
-    LOCAL_RANK = int(os.getenv("LOCAL_RANK", "0"))
-    LOCAL_SIZE = int(os.getenv("LOCAL_WORLD_SIZE", "1"))
+def _test_nvfp4_partial_cast_matches_full(dp_group) -> None:
+    """Multi-GPU worker: split master weight, partial cast on each rank, gather, compare."""
+    WORLD_RANK = dist.get_rank(dp_group)
+    WORLD_SIZE = dist.get_world_size(dp_group)
 
-    assert WORLD_SIZE == LOCAL_SIZE  # this test supports only 1 node
-    assert LOCAL_SIZE <= torch.cuda.device_count()
-    dist_init_kwargs = {
-        "backend": "nccl",
-        "rank": WORLD_RANK,
-        "world_size": WORLD_SIZE,
-        "timeout": datetime.timedelta(seconds=30),
-    }
-    dist_init_kwargs["init_method"] = "env://"
-    dist_init_kwargs["device_id"] = torch.device(f"cuda:{LOCAL_RANK}")
-    assert dist.is_nccl_available()
-    torch.cuda.set_device(LOCAL_RANK)
-    dist.init_process_group(**dist_init_kwargs)
-    dp_group = dist.new_group(backend="nccl")
     available, reason = is_nvfp4_available(return_reason=True)
     if not available:
         pytest.skip(reason)
@@ -1171,6 +1190,25 @@ def test_nvfp4_partial_cast_matches_full() -> None:
     )
 
 
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="NVFP4 partial-cast test needs at least 2 GPUs."
+)
+@pytest.mark.parametrize("world_size", [2])
+def test_nvfp4_partial_cast_matches_full(world_size: int) -> None:
+    """Launch a distributed job for NVFP4 partial-cast equivalence test."""
+    python_exe = pathlib.Path(sys.executable).resolve()
+    current_file = pathlib.Path(__file__).resolve()
+    command = [
+        python_exe,
+        "-m",
+        "torch.distributed.run",
+        f"--nproc_per_node={world_size}",
+        current_file,
+        "--parallel-nvfp4-partial",
+    ]
+    subprocess.run(command, check=True)
+
+
 def test_single_gpu_partial_cast_vs_full():
     """
     Single GPU test: compare quantize_master_weights (offset=0) vs quantizer().
@@ -1204,17 +1242,37 @@ def test_single_gpu_partial_cast_vs_full():
     if test_tensor._amax_rowwise is not None:
         test_tensor._amax_rowwise.zero_()
 
-    # Create a mock distributed group for single GPU
+    # Create a local single-rank process group when running under plain pytest.
+    initialized_here = False
+    rendezvous_file = None
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl", init_method="env://", rank=0, world_size=1)
-    mock_group = dist.new_group(ranks=[0])
+        torch.cuda.set_device(0)
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            rendezvous_file = pathlib.Path(f.name)
+        dist.init_process_group(
+            backend="nccl",
+            init_method=rendezvous_file.resolve().as_uri(),
+            rank=0,
+            world_size=1,
+        )
+        initialized_here = True
 
-    quantize_master_weights(
-        [test_tensor],
-        [master_weight.view(-1)],  # Flatten as expected
-        [0],  # offset=0 means full tensor
-        mock_group,
-    )
+    if dist.get_world_size() != 1:
+        pytest.skip("test_single_gpu_partial_cast_vs_full requires world_size == 1")
+
+    mock_group = dist.new_group(ranks=[0], backend="nccl")
+    try:
+        quantize_master_weights(
+            [test_tensor],
+            [master_weight.view(-1)],  # Flatten as expected
+            [0],  # offset=0 means full tensor
+            mock_group,
+        )
+    finally:
+        if initialized_here:
+            dist.destroy_process_group()
+        if rendezvous_file is not None:
+            rendezvous_file.unlink(missing_ok=True)
 
     # Compare amax
     amax_match = torch.equal(test_tensor._amax_rowwise, ref_amax)
