@@ -320,9 +320,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("swap_first_dims", &transformer_engine::pytorch::swap_first_dims,
         "Swap first two tensor dimensions", py::arg("tensor"), py::kw_only(), py::arg("out"),
         py::call_guard<py::gil_scoped_release>());
-  m.def("cumsum", &transformer_engine::pytorch::cumsum, "Exclusive cumsum with leading zero",
-        py::arg("input"), py::kw_only(), py::arg("out") = py::none(),
-        py::call_guard<py::gil_scoped_release>());
   m.def("get_fused_attn_backend", &transformer_engine::pytorch::get_fused_attn_backend,
         "Get Fused Attention backend", py::call_guard<py::gil_scoped_release>());
   m.def("compute_amax", &transformer_engine::pytorch::compute_amax,

@@ -74,14 +74,10 @@ std::optional<at::Tensor> build_grouped_tensor_offsets(const size_t num_tensors,
 
   const int64_t logical_last_dim_i64 = static_cast<int64_t>(logical_last_dim);
   auto scaled_first_dims = (first_dims_tensor * logical_last_dim_i64).contiguous();
-  auto tensor_offsets =
-      at::empty({static_cast<int64_t>(num_tensors + 1)}, scaled_first_dims.options());
-
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_cumsum(scaled_first_dims.data_ptr<int64_t>(), tensor_offsets.data_ptr<int64_t>(),
-                num_tensors, at::cuda::getCurrentCUDAStream());
-  });
-  return tensor_offsets;
+  // Single kernel needed for these ops.
+  auto cumsum = at::cumsum(scaled_first_dims, 0);
+  auto zero = at::zeros({1}, cumsum.options());
+  return at::cat({zero, cumsum});
 }
 
 at::TensorOptions grouped_tensor_data_options(const DType dtype) {
@@ -90,17 +86,6 @@ at::TensorOptions grouped_tensor_data_options(const DType dtype) {
 
 py::object maybe_tensor_to_py(const std::optional<at::Tensor>& tensor) {
   return tensor ? py::cast(*tensor) : py::none();
-}
-
-py::object make_grouped_quantizers(const py::object& quantizer, const size_t num_tensors) {
-  if (quantizer.is_none()) {
-    return py::none();
-  }
-  py::list quantizers;
-  for (size_t i = 0; i < num_tensors; ++i) {
-    quantizers.append(quantizer);
-  }
-  return std::move(quantizers);
 }
 
 py::handle grouped_tensor_python_class(const bool internal) {
@@ -196,8 +181,7 @@ std::pair<GroupedTensorWrapper, py::object> NoneQuantizer::create_grouped_tensor
   py::object out_py = GroupedTensorClass(
       std::vector<int64_t>{static_cast<int64_t>(logical_first_dim),
                            static_cast<int64_t>(logical_last_dim)},
-      GetATenDType(dtype), "num_tensors"_a = num_tensors,
-      "quantizers"_a = make_grouped_quantizers(quantizer, num_tensors),
+      GetATenDType(dtype), "num_tensors"_a = num_tensors, "quantizer"_a = quantizer,
       "data"_a = maybe_tensor_to_py(rowwise_data),
       "columnwise_data"_a = maybe_tensor_to_py(columnwise_data), "scale_inv"_a = py::none(),
       "columnwise_scale_inv"_a = py::none(), "amax"_a = py::none(),
@@ -391,8 +375,7 @@ std::pair<GroupedTensorWrapper, py::object> Float8Quantizer::create_grouped_tens
   py::object out_py = GroupedTensorClass(
       std::vector<int64_t>{static_cast<int64_t>(logical_first_dim),
                            static_cast<int64_t>(logical_last_dim)},
-      GetATenDType(dtype), "num_tensors"_a = num_tensors,
-      "quantizers"_a = make_grouped_quantizers(quantizer, num_tensors),
+      GetATenDType(dtype), "num_tensors"_a = num_tensors, "quantizer"_a = quantizer,
       "data"_a = maybe_tensor_to_py(rowwise_data),
       "columnwise_data"_a = maybe_tensor_to_py(columnwise_data),
       "scale_inv"_a = maybe_tensor_to_py(rowwise_scale_inv),
@@ -699,8 +682,7 @@ std::pair<GroupedTensorWrapper, py::object> Float8CurrentScalingQuantizer::creat
   py::object out_py = GroupedTensorClass(
       std::vector<int64_t>{static_cast<int64_t>(logical_first_dim),
                            static_cast<int64_t>(logical_last_dim)},
-      GetATenDType(dtype), "num_tensors"_a = num_tensors,
-      "quantizers"_a = make_grouped_quantizers(quantizer, num_tensors),
+      GetATenDType(dtype), "num_tensors"_a = num_tensors, "quantizer"_a = quantizer,
       "data"_a = maybe_tensor_to_py(rowwise_data),
       "columnwise_data"_a = maybe_tensor_to_py(columnwise_data),
       "scale_inv"_a = maybe_tensor_to_py(rowwise_scale_inv),
@@ -1047,8 +1029,7 @@ std::pair<GroupedTensorWrapper, py::object> Float8BlockQuantizer::create_grouped
   py::object out_py = GroupedTensorClass(
       std::vector<int64_t>{static_cast<int64_t>(logical_first_dim),
                            static_cast<int64_t>(logical_last_dim)},
-      GetATenDType(dtype), "num_tensors"_a = num_tensors,
-      "quantizers"_a = make_grouped_quantizers(quantizer, num_tensors),
+      GetATenDType(dtype), "num_tensors"_a = num_tensors, "quantizer"_a = quantizer,
       "data"_a = maybe_tensor_to_py(rowwise_data),
       "columnwise_data"_a = maybe_tensor_to_py(columnwise_data),
       "scale_inv"_a = maybe_tensor_to_py(rowwise_scale_inv),
@@ -1453,8 +1434,7 @@ std::pair<GroupedTensorWrapper, py::object> MXFP8Quantizer::create_grouped_tenso
   py::object out_py = GroupedTensorClass(
       std::vector<int64_t>{static_cast<int64_t>(logical_first_dim),
                            static_cast<int64_t>(logical_last_dim)},
-      GetATenDType(dtype), "num_tensors"_a = num_tensors,
-      "quantizers"_a = make_grouped_quantizers(quantizer, num_tensors),
+      GetATenDType(dtype), "num_tensors"_a = num_tensors, "quantizer"_a = quantizer,
       "data"_a = maybe_tensor_to_py(rowwise_data),
       "columnwise_data"_a = maybe_tensor_to_py(columnwise_data),
       "scale_inv"_a = maybe_tensor_to_py(rowwise_scale_inv),
@@ -1871,8 +1851,7 @@ std::pair<GroupedTensorWrapper, py::object> NVFP4Quantizer::create_grouped_tenso
   py::object out_py = GroupedTensorClass(
       std::vector<int64_t>{static_cast<int64_t>(logical_first_dim),
                            static_cast<int64_t>(logical_last_dim)},
-      GetATenDType(dtype), "num_tensors"_a = num_tensors,
-      "quantizers"_a = make_grouped_quantizers(quantizer, num_tensors),
+      GetATenDType(dtype), "num_tensors"_a = num_tensors, "quantizer"_a = quantizer,
       "data"_a = maybe_tensor_to_py(rowwise_data),
       "columnwise_data"_a = maybe_tensor_to_py(columnwise_data),
       "scale_inv"_a = maybe_tensor_to_py(rowwise_scale_inv),

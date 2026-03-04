@@ -50,7 +50,7 @@ class GroupedTensor(GroupedTensorStorage, torch.Tensor):
         dtype: torch.dtype,
         num_tensors: int,
         shapes: Optional[List[Tuple[int, int]]] = None,
-        quantizers: Optional[List[Optional[Quantizer]]] = None,
+        quantizer: Optional[Quantizer] = None,
         data: Optional[torch.Tensor] = None,
         columnwise_data: Optional[torch.Tensor] = None,
         scale_inv: Optional[torch.Tensor] = None,
@@ -65,7 +65,7 @@ class GroupedTensor(GroupedTensorStorage, torch.Tensor):
         scale_inv_offsets: Optional[List[int]] = None,
         columnwise_scale_inv_offsets: Optional[List[int]] = None,
     ):
-        del quantizers
+        del quantizer
         del offsets
         del scale_inv_offsets
         del columnwise_scale_inv_offsets
@@ -156,7 +156,7 @@ class GroupedTensor(GroupedTensorStorage, torch.Tensor):
                     "GroupedTensor __torch_dispatch__ currently supports only uniform member shapes"
                 )
             updated_members = list(updated.unbind(dim=0))
-            if grouped.quantizers is None:
+            if grouped.quantizer is None:
                 grouped_members = grouped.quantized_tensors
                 if grouped_members is None:
                     grouped_members = grouped.split_into_quantized_tensors()

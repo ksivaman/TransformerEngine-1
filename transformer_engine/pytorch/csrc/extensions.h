@@ -191,8 +191,6 @@ void nvfp4_compute_global_scale(at::Tensor global_amax, at::Tensor global_scale)
 
 at::Tensor swap_first_dims(at::Tensor tensor, std::optional<at::Tensor> out = std::nullopt);
 
-at::Tensor cumsum(at::Tensor input, std::optional<at::Tensor> out = std::nullopt);
-
 /***************************************************************************************************
  * Activations
  **************************************************************************************************/

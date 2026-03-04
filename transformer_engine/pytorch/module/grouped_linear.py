@@ -773,7 +773,7 @@ class GroupedLinear(TransformerEngineBaseModule):
         grouped_weights = GroupedTensor.make_grouped_tensor_with_shapes(
             num_tensors=self.num_gemms,
             shapes=[(self.out_features, self.in_features)] * self.num_gemms,
-            quantizers=weight_quantizers,
+            quantizer=weight_quantizers[0],
             dtype=self.params_dtype,
             device=weights[0].device,
         )
