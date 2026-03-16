@@ -1368,7 +1368,8 @@ GroupedBuffers build_grouped_tensor(const std::vector<Tensor*>& tensors,
     }
 
     // Mark as having swizzled scales (required for NVFP4 GEMM)
-    nvte_set_grouped_tensor_swizzled_scales(h, 1);
+    uint8_t swizzled = 1;
+    nvte_set_grouped_tensor_param(h, kNVTEGroupedWithGEMMSwizzledScales, &swizzled, sizeof(swizzled));
 
     // Gather per-tensor amax values for NVFP4 global scale computation
     auto gather_amax = [&](NVTETensorParam param) -> CudaPtr<> {
