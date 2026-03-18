@@ -235,6 +235,21 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         weight_k = fc2_weight_shape[1] // 2 if use_nvfp4 else fc2_weight_shape[1]
         k_sf_divisor = 2 * sf_vec_size if use_nvfp4 else 4 * sf_vec_size
 
+        def _pack_nvfp4_amax_list(tensors: object) -> None:
+            """Ensure discrete NVFP4 tensor list uses contiguous per-group amax buffers."""
+            if not (use_nvfp4 and isinstance(tensors, list) and tensors):
+                return
+            row_amaxes = [getattr(tensor, "_amax_rowwise", None) for tensor in tensors]
+            if all(amax is not None for amax in row_amaxes):
+                packed_row_amax = torch.cat([amax.view(-1) for amax in row_amaxes], dim=0).contiguous()
+                for idx, tensor in enumerate(tensors):
+                    tensor._amax_rowwise = packed_row_amax[idx : idx + 1]
+            col_amaxes = [getattr(tensor, "_amax_columnwise", None) for tensor in tensors]
+            if all(amax is not None for amax in col_amaxes):
+                packed_col_amax = torch.cat([amax.view(-1) for amax in col_amaxes], dim=0).contiguous()
+                for idx, tensor in enumerate(tensors):
+                    tensor._amax_columnwise = packed_col_amax[idx : idx + 1]
+
         # Pack data tensors
         # Note: Fused kernel expects tensor with non-contiguous
         # logical dims.
@@ -277,7 +292,8 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         )
         fc2_w_data = fc2_w_data.view(dtype=data_dtype)
         fc2_w_data = fc2_w_data.view(num_groups, fc2_weight_shape[0], weight_k)
-        fc2_w_data = fc2_w_data.permute(2, 1, 0)
+        # Wrapper API expects B logical shape (n, k, num_groups).
+        fc2_w_data = fc2_w_data.permute(1, 2, 0)
         fc2_w_scales = (
             grouped_fc2_weight.columnwise_scale_inv
             if fc2_op.single_grouped_parameter
@@ -295,11 +311,12 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         fc2_w_scales = fc2_w_scales.permute(
             0, 3, 1, 5, 4, 2
         ).contiguous()  # Convert to swizzled layout
-        fc2_w_scales = fc2_w_scales.permute(3, 4, 1, 5, 2, 0)
+        # Expected SFB logical shape for wrapper: (32, 4, n/128, 4, k_sf, num_groups)
+        fc2_w_scales = fc2_w_scales.permute(3, 4, 2, 5, 1, 0)
 
         # Kernel scaling factors
         alpha_tensor, norm_const_tensor = self._get_kernel_constants(
-            num_groups=num_groups, dtype=dtype, device=device
+            num_groups=num_groups, device=device
         )
         norm_const_tensor_arg = None if use_nvfp4 else norm_const_tensor
         current_stream = cuda.CUstream(  # pylint: disable=c-extension-no-member
@@ -322,7 +339,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             cd_major="n",
             sf_vec_size=sf_vec_size,
             current_stream=current_stream,
-            discrete_col_sfd=True,
+            discrete_col_sfd=not use_nvfp4,
         )
 
         # Unpack kernel outputs
@@ -500,6 +517,19 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         # FC1 dgrad GEMM
         grad_input = None
         if fc1_ctx.input_requires_grad:
+            _pack_nvfp4_amax_list(grouped_fc1_weight)
+            if (
+                use_nvfp4
+                and hasattr(grouped_fc1_weight, "with_gemm_swizzled_scales")
+                and grouped_fc1_weight.with_gemm_swizzled_scales is not True
+            ):
+                grouped_fc1_weight.with_gemm_swizzled_scales = True
+            if (
+                use_nvfp4
+                and hasattr(grouped_fc1_dy, "with_gemm_swizzled_scales")
+                and grouped_fc1_dy.with_gemm_swizzled_scales is not True
+            ):
+                grouped_fc1_dy.with_gemm_swizzled_scales = True
             # Launch GEMM
             in_shape = out_shape[:-1] + [fc1_weight_shape[1]]
             grad_input = torch.empty(in_shape, dtype=dtype, device=device)
@@ -654,7 +684,6 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         self,
         *,
         num_groups: int,
-        dtype: torch.dtype,
         device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         global global_alpha_tensor
@@ -663,16 +692,17 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         if (
             alpha_tensor is None
             or alpha_tensor.numel() != num_groups
-            or alpha_tensor.dtype != dtype
+            or alpha_tensor.dtype != torch.float32
             or alpha_tensor.device != device
         ):
             if (
                 global_alpha_tensor is None
                 or global_alpha_tensor.numel() != num_groups
-                or global_alpha_tensor.dtype != dtype
+                or global_alpha_tensor.dtype != torch.float32
                 or global_alpha_tensor.device != device
             ):
-                global_alpha_tensor = torch.ones(num_groups, dtype=dtype, device=device)
+                # cuDNN grouped_gemm_dswiglu reference API uses FP32 alpha/beta/norm_const.
+                global_alpha_tensor = torch.ones(num_groups, dtype=torch.float32, device=device)
             alpha_tensor = global_alpha_tensor
             norm_const_tensor = alpha_tensor[:1]
             self._mxfp8_alpha_tensor = alpha_tensor
