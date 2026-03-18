@@ -3269,8 +3269,8 @@ class TestSequentialModules:
         # Skip invalid configurations
         with_quantization = quantization is not None
         maybe_skip_quantization(quantization, dims=in_shape, device=device, dtype=dtype)
-        if single_grouped_parameter and quantization != "mxfp8":
-            pytest.skip("single_grouped_parameter is only supported for MXFP8 quantization")
+        if single_grouped_parameter and quantization not in ("mxfp8", "nvfp4"):
+            pytest.skip("single_grouped_parameter is only supported for MXFP8 and NVFP4 quantization")
         if with_quantization and dtype not in (torch.bfloat16, torch.float16):
             pytest.skip("Quantized group GEMM is only supported with BF16/FP16")
 
@@ -3369,7 +3369,11 @@ class TestSequentialModules:
         y_ref.backward(dy_ref)
 
         # Construct operations
-        recipe = make_recipe(quantization)
+        # TMP WAR to enable RHT for group_quantize
+        if quantization == "nvfp4":
+            recipe = transformer_engine.common.recipe.NVFP4BlockScaling()
+        else:
+            recipe = make_recipe(quantization)
         with te.quantized_model_init(enabled=with_quantization, recipe=recipe):
             fc1 = te_ops.GroupedLinear(
                 group_size,
@@ -3453,24 +3457,24 @@ class TestSequentialModules:
 
         # Check for expected fusions
         if (
-            quantization == "mxfp8"
+            quantization in ("mxfp8", "nvfp4")
             and dtype in (torch.bfloat16, torch.float16)
             and not bias
             and glu_interleave_size == 32
         ):
-            assert te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8.is_supported()
-            assert te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8.is_supported()
+            assert te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled.is_supported()
+            assert te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled.is_supported()
             forward_ops = module._module_groups[0]._forward_ops
             backward_ops = module._module_groups[0]._backward_ops
             assert len(forward_ops) == 1
             assert isinstance(
                 forward_ops[0][0],
-                te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8,
+                te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled,
             )
             assert len(backward_ops) == 1
             assert isinstance(
                 backward_ops[0][0],
-                te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8,
+                te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled,
             )
 
         # Loose tols for sanity checking
@@ -3543,7 +3547,7 @@ class TestSequentialModules:
     ) -> None:
         """Grouped MLP forward+backward should be CUDA graph capturable (MXFP8)."""
 
-        if not te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8.is_supported():
+        if not te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled.is_supported():
             pytest.skip("MXFP8 fused grouped MLP is not supported on this system")
         if dtype not in (torch.bfloat16, torch.float16):
             pytest.skip("MXFP8 fused grouped MLP is only supported with BF16/FP16")
@@ -3683,12 +3687,12 @@ class TestSequentialModules:
         assert len(forward_ops) == 1
         assert isinstance(
             forward_ops[0][0],
-            te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8,
+            te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled,
         )
         assert len(backward_ops) == 1
         assert isinstance(
             backward_ops[0][0],
-            te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8,
+            te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled,
         )
 
         graphed_module = te.make_graphed_callables(
