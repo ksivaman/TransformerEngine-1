@@ -34,6 +34,8 @@ enum class InputCase {
   kFP8Current,
   kBF16,
   kMXFP8,
+  kNVFP4,
+  kFP8BlockScaling,
 };
 
 enum class ShapeCase {
@@ -145,6 +147,139 @@ Tensor make_mxfp8_operand(const std::string& name, const std::vector<size_t>& sh
   return mxfp8_swizzled;
 }
 
+// Helper: quantize BF16 tensor to NVFP4 rowwise-only, swizzle scales, return swizzled tensor.
+Tensor make_nvfp4_rowwise(const std::string& name, const std::vector<size_t>& shape) {
+  Tensor input_bf16(name + "_bf16", shape, DType::kBFloat16);
+  fillUniform(&input_bf16);
+
+  Tensor nvfp4(name, shape, DType::kFloat4E2M1, /*rowwise=*/true, /*columnwise=*/false,
+               NVTE_NVFP4_1D_SCALING);
+
+  // Allocate amax on the tensor so nvte_quantize_v2 fills it with max(|input|).
+  // This enables per-group alpha computation in grouped GEMM.
+  // Note: small leak (Tensor destructor doesn't free amax for NVFP4) — acceptable in test.
+  float *amax_ptr;
+  NVTE_CHECK_CUDA(cudaMalloc(&amax_ptr, sizeof(float)));
+  NVTE_CHECK_CUDA(cudaMemset(amax_ptr, 0, sizeof(float)));
+  {
+    size_t one = 1;
+    NVTEBasicTensor amax_bt = {amax_ptr, kNVTEFloat32, nvte_make_shape(&one, 1)};
+    NVTETensor h = nvfp4.data();
+    nvte_set_tensor_param(&h, kNVTEAmax, &amax_bt);
+  }
+
+  QuantizationConfigWrapper quant_config;
+  nvte_quantize_v2(input_bf16.data(), nvfp4.data(), quant_config, 0);
+
+  Tensor nvfp4_sw(name + "_sw", shape, DType::kFloat4E2M1,
+                  /*rowwise=*/true, /*columnwise=*/false, NVTE_NVFP4_1D_SCALING);
+  nvfp4_sw.set_with_gemm_swizzled_scales(true);
+  size_t data_bytes = test::bytes(nvfp4.rowwise_shape(), nvfp4.dtype());
+  NVTE_CHECK_CUDA(cudaMemcpy(nvfp4_sw.rowwise_dptr(), nvfp4.rowwise_dptr(),
+                             data_bytes, cudaMemcpyDeviceToDevice));
+  nvte_swizzle_scaling_factors(nvfp4.data(), nvfp4_sw.data(), 0);
+  NVTE_CHECK_CUDA(cudaDeviceSynchronize());
+  return nvfp4_sw;
+}
+
+// Creates an NVFP4 operand with both rowwise and columnwise data, swizzled scales.
+// NVFP4 "columnwise" data is the transposed tensor quantized rowwise.
+// We quantize rowwise directly, and for columnwise we quantize the transposed input rowwise.
+Tensor make_nvfp4_operand(const std::string& name, const std::vector<size_t>& shape,
+                          bool is_A, bool transposed) {
+  (void)is_A;
+  (void)transposed;
+
+  // 1. Rowwise: quantize + swizzle directly
+  Tensor rowwise = make_nvfp4_rowwise(name + "_row", shape);
+
+  // 2. Columnwise: transpose input, quantize + swizzle as rowwise of transposed shape
+  std::vector<size_t> t_shape = {shape[1], shape[0]};
+  Tensor colwise = make_nvfp4_rowwise(name + "_col", t_shape);
+
+  // 3. Assemble: both-layout tensor with rowwise from (1) and columnwise from (2)
+  Tensor result(name, shape, DType::kFloat4E2M1, /*rowwise=*/true, /*columnwise=*/true,
+                NVTE_NVFP4_1D_SCALING);
+  result.set_with_gemm_swizzled_scales(true);
+
+  // Copy rowwise data + scale from rowwise tensor
+  {
+    size_t data_bytes = test::bytes(rowwise.rowwise_shape(), rowwise.dtype());
+    NVTE_CHECK_CUDA(cudaMemcpy(result.rowwise_dptr(), rowwise.rowwise_dptr(),
+                               data_bytes, cudaMemcpyDeviceToDevice));
+    size_t scale_bytes = test::bytes(rowwise.rowwise_scale_inv_shape(), DType::kFloat8E4M3);
+    NVTE_CHECK_CUDA(cudaMemcpy(
+        nvte_get_tensor_param(result.data(), kNVTERowwiseScaleInv).data_ptr,
+        nvte_get_tensor_param(rowwise.data(), kNVTERowwiseScaleInv).data_ptr,
+        scale_bytes, cudaMemcpyDeviceToDevice));
+  }
+
+  // Copy colwise data + scale from transposed-rowwise tensor
+  // The rowwise data of transposed shape IS the columnwise data of original shape
+  {
+    size_t data_bytes = test::bytes(colwise.rowwise_shape(), colwise.dtype());
+    NVTE_CHECK_CUDA(cudaMemcpy(result.columnwise_dptr(), colwise.rowwise_dptr(),
+                               data_bytes, cudaMemcpyDeviceToDevice));
+    size_t scale_bytes = test::bytes(colwise.rowwise_scale_inv_shape(), DType::kFloat8E4M3);
+    NVTE_CHECK_CUDA(cudaMemcpy(
+        nvte_get_tensor_param(result.data(), kNVTEColumnwiseScaleInv).data_ptr,
+        nvte_get_tensor_param(colwise.data(), kNVTERowwiseScaleInv).data_ptr,
+        scale_bytes, cudaMemcpyDeviceToDevice));
+  }
+
+  // Copy amax from rowwise/colwise tensors to result
+  // Rowwise amax → result.amax (used when transa=T)
+  // Colwise amax → result.columnwise_amax (used when transa=N)
+  {
+    NVTEBasicTensor row_amax = nvte_get_tensor_param(rowwise.data(), kNVTEAmax);
+    NVTETensor h = result.data();
+    nvte_set_tensor_param(&h, kNVTEAmax, &row_amax);
+  }
+  {
+    NVTEBasicTensor col_amax = nvte_get_tensor_param(colwise.data(), kNVTEAmax);
+    NVTETensor h = result.data();
+    nvte_set_tensor_param(&h, kNVTEColumnwiseAmax, &col_amax);
+  }
+
+  NVTE_CHECK_CUDA(cudaDeviceSynchronize());
+  return result;
+}
+
+// Creates an FP8 block-scaling operand.
+// FP8 block scaling on Hopper requires TN layout:
+//   A transposed     -> needs rowwise data
+//   A non-transposed -> needs columnwise data (will be flipped to T internally)
+//   B transposed     -> needs columnwise data (will be flipped to N internally)
+//   B non-transposed -> needs rowwise data
+Tensor make_fp8_block_scaling_operand(const std::string& name, const std::vector<size_t>& shape,
+                                      bool is_A, bool transposed) {
+  // Determine which data layout we need (TN-only on Hopper)
+  bool use_rowwise, use_colwise;
+  if (is_A) {
+    use_rowwise = transposed;
+    use_colwise = !transposed;
+  } else {
+    use_rowwise = !transposed;
+    use_colwise = transposed;
+  }
+
+  // Create BF16 input with random data
+  Tensor input_bf16(name + "_bf16", shape, DType::kBFloat16);
+  fillUniform(&input_bf16);
+
+  // Create FP8 block scaling tensor (1D scaling)
+  Tensor fp8_bs(name, shape, TypeInfo<fp8e4m3>::dtype, use_rowwise, use_colwise,
+                NVTE_BLOCK_SCALING_1D);
+
+  // Quantize BF16 -> FP8 block scaling
+  QuantizationConfigWrapper quant_config;
+  quant_config.set_force_pow_2_scales(true);
+  nvte_quantize_v2(input_bf16.data(), fp8_bs.data(), quant_config, 0);
+  NVTE_CHECK_CUDA(cudaDeviceSynchronize());
+
+  return fp8_bs;
+}
+
 struct TestParams {
   InputCase input_case;
   bool transa;
@@ -173,14 +308,48 @@ std::vector<std::tuple<size_t, size_t, size_t>> make_shapes(ShapeCase scase) {
   }
 }
 
+// Compile-time version macro for Hopper grouped GEMM support (mirrors cublaslt_grouped_gemm.cu)
+#define CUBLAS_GROUPED_GEMM_HOPPER_VERSION 130400
+
 void run_grouped_gemm_case(const TestParams& params) {
 #if CUBLAS_VERSION < 130200
   GTEST_SKIP() << "Grouped GEMM requires cuBLAS 13.2+, but compile-time cuBLAS version is "
                << CUBLAS_VERSION << ".";
 #else
-  if (getDeviceComputeCapability() < blackwellComputeCapability) {
+  const int32_t cc = getDeviceComputeCapability();
+
+#if CUBLAS_VERSION >= CUBLAS_GROUPED_GEMM_HOPPER_VERSION
+  // Compiled with cuBLAS 13.4+: Hopper (SM90) and Blackwell+ are supported.
+  if (cc < hopperComputeCapability) {
+    GTEST_SKIP() << "Grouped GEMM requires Hopper (SM90) or newer with cuBLAS 13.4+, "
+                 << "but device compute capability is " << cc << ".";
+  }
+  // MXFP8 grouped GEMM is only supported on Blackwell+
+  if (cc < blackwellComputeCapability && params.input_case == InputCase::kMXFP8) {
+    GTEST_SKIP() << "MXFP8 grouped GEMM requires Blackwell (SM100) or newer, "
+                 << "but device compute capability is " << cc << ".";
+  }
+  // NVFP4 grouped GEMM is only supported on Blackwell+
+  if (cc < blackwellComputeCapability && params.input_case == InputCase::kNVFP4) {
+    GTEST_SKIP() << "NVFP4 grouped GEMM requires Blackwell (SM100) or newer, "
+                 << "but device compute capability is " << cc << ".";
+  }
+  // FP8 block scaling grouped GEMM is only supported on Hopper
+  if (cc >= blackwellComputeCapability && params.input_case == InputCase::kFP8BlockScaling) {
+    GTEST_SKIP() << "FP8 block scaling grouped GEMM is only supported on Hopper (SM90), "
+                 << "but device compute capability is " << cc << ".";
+  }
+#else
+  // Compiled with cuBLAS 13.2: only Blackwell+ is supported.
+  if (cc < blackwellComputeCapability) {
     GTEST_SKIP() << "Grouped GEMM requires Blackwell (SM100) or newer.";
   }
+  // FP8 block scaling grouped GEMM is only supported on Hopper
+  if (params.input_case == InputCase::kFP8BlockScaling) {
+    GTEST_SKIP() << "FP8 block scaling grouped GEMM is only supported on Hopper (SM90), "
+                 << "but device compute capability is " << cc << ".";
+  }
+#endif  // CUBLAS_VERSION >= CUBLAS_GROUPED_GEMM_HOPPER_VERSION
 
   const std::vector<std::tuple<size_t, size_t, size_t>> shapes = make_shapes(params.shape_case);
 
@@ -217,6 +386,20 @@ void run_grouped_gemm_case(const TestParams& params) {
                                                   /*is_A=*/false, params.transb));
         break;
       }
+      case InputCase::kNVFP4: {
+        A_tensors.emplace_back(make_nvfp4_operand("A" + std::to_string(i), a_shape,
+                                                  /*is_A=*/true, params.transa));
+        B_tensors.emplace_back(make_nvfp4_operand("B" + std::to_string(i), b_shape,
+                                                  /*is_A=*/false, params.transb));
+        break;
+      }
+      case InputCase::kFP8BlockScaling: {
+        A_tensors.emplace_back(make_fp8_block_scaling_operand("A" + std::to_string(i), a_shape,
+                                                              /*is_A=*/true, params.transa));
+        B_tensors.emplace_back(make_fp8_block_scaling_operand("B" + std::to_string(i), b_shape,
+                                                              /*is_A=*/false, params.transb));
+        break;
+      }
     }
     D_multi.emplace_back(Tensor("D_multi" + std::to_string(i),
                                 std::vector<size_t>{M, N},
@@ -249,6 +432,9 @@ void run_grouped_gemm_case(const TestParams& params) {
     B_views.push_back(&B_tensors[i]);
   }
 
+  // FP8 block scaling requires split accumulator (no fast accumulation)
+  const bool use_split_accum = (params.input_case == InputCase::kFP8BlockScaling);
+
   nvte_multi_tensor_gemm(A_ptrs.data(),
                          B_ptrs.data(),
                          D_ptrs.data(),
@@ -260,7 +446,7 @@ void run_grouped_gemm_case(const TestParams& params) {
                          false,  // grad
                          workspace_ptrs.data(),
                          false,  // accumulate
-                         false,  // use_split_accumulator
+                         use_split_accum,
                          0,      // sm_count
                          0);
 
@@ -299,19 +485,25 @@ void run_grouped_gemm_case(const TestParams& params) {
   }
   GroupedBuffers grouped_D = build_grouped_tensor(D_views, NVTE_DELAYED_TENSOR_SCALING);
 
-  // Per-matrix alpha/beta (all 1.0 and 0.0 respectively)
-  Tensor alpha_tensor("alpha", std::vector<size_t>{num_gemms}, DType::kFloat32);
-  Tensor beta_tensor("beta", std::vector<size_t>{num_gemms}, DType::kFloat32);
-  std::vector<float> alpha_vals(num_gemms, 1.f);
-  std::vector<float> beta_vals(num_gemms, 0.f);
+  const size_t alpha_beta_numel = cc < blackwellComputeCapability ? 1 : num_gemms;
+  Tensor alpha_tensor("alpha", std::vector<size_t>{alpha_beta_numel}, DType::kFloat32);
+  Tensor beta_tensor("beta", std::vector<size_t>{alpha_beta_numel}, DType::kFloat32);
+  std::vector<float> alpha_vals(alpha_beta_numel, 1.f);
+  std::vector<float> beta_vals(alpha_beta_numel, 0.f);
   NVTE_CHECK_CUDA(cudaMemcpy(alpha_tensor.rowwise_dptr(), alpha_vals.data(),
-                             num_gemms * sizeof(float), cudaMemcpyHostToDevice));
+                             alpha_beta_numel * sizeof(float), cudaMemcpyHostToDevice));
   NVTE_CHECK_CUDA(cudaMemcpy(beta_tensor.rowwise_dptr(), beta_vals.data(),
-                             num_gemms * sizeof(float), cudaMemcpyHostToDevice));
+                             alpha_beta_numel * sizeof(float), cudaMemcpyHostToDevice));
 
   const size_t setup_ws_bytes = grouped_setup_workspace_size(num_gemms);
   Tensor setup_ws("setup_ws", std::vector<size_t>{setup_ws_bytes}, DType::kByte);
   Tensor cublas_ws("cublas_ws", std::vector<size_t>{cublas_ws_bytes}, DType::kByte);
+
+  // Create config for grouped GEMM (FP8 block scaling requires split accumulator)
+  GroupedMatmulConfigWrapper grouped_config;
+  if (use_split_accum) {
+    grouped_config.set_use_split_accumulator(true);
+  }
 
   nvte_grouped_gemm(grouped_A.get_handle(),
                     params.transa,
@@ -323,7 +515,7 @@ void run_grouped_gemm_case(const TestParams& params) {
                     beta_tensor.data(),
                     setup_ws.data(),
                     cublas_ws.data(),
-                    nullptr,  // config (use defaults)
+                    grouped_config,
                     0);
   NVTE_CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -724,7 +916,7 @@ TEST_P(GroupedGemmTest, CompareWithMultiTensorGemmDiscreteIn) {
 }
 
 std::string MakeGroupedGemmTestName(const testing::TestParamInfo<GroupedGemmTest::ParamType>& info) {
-  constexpr const char* kInputNames[] = {"FP8Current", "BF16", "MXFP8"};
+  constexpr const char* kInputNames[] = {"FP8Current", "BF16", "MXFP8", "NVFP4", "FP8BlockScaling"};
   constexpr const char* kShapeNames[] = {"AllSame", "SameM", "SameN", "AllDiff"};
   const std::string layout = std::string("ta") + (info.param.transa ? "T" : "N") +
                              "tb" + (info.param.transb ? "T" : "N");
@@ -756,6 +948,26 @@ const std::vector<TestParams> kTestParams = {
     {InputCase::kMXFP8, false, false, ShapeCase::kSameFirst, false},
     // MXFP8 with NULL C
     {InputCase::kMXFP8, true, false, ShapeCase::kAllSame, true},
+    // NVFP4 tests (all transpose combinations - GEMM internally forces TN)
+    {InputCase::kNVFP4, true, false, ShapeCase::kAllSame, false},
+    {InputCase::kNVFP4, true, false, ShapeCase::kAllDifferent, false},
+    {InputCase::kNVFP4, true, false, ShapeCase::kSameFirst, false},
+    {InputCase::kNVFP4, true, false, ShapeCase::kSameLast, false},
+    {InputCase::kNVFP4, false, true, ShapeCase::kAllSame, false},
+    {InputCase::kNVFP4, false, true, ShapeCase::kAllDifferent, false},
+    {InputCase::kNVFP4, false, false, ShapeCase::kAllSame, false},
+    {InputCase::kNVFP4, false, false, ShapeCase::kAllDifferent, false},
+    // NVFP4 with NULL C
+    {InputCase::kNVFP4, true, false, ShapeCase::kAllSame, true},
+    // FP8 Block Scaling tests (TN layout on Hopper, block size 128)
+    {InputCase::kFP8BlockScaling, true, false, ShapeCase::kAllSame, false},
+    {InputCase::kFP8BlockScaling, true, false, ShapeCase::kAllDifferent, false},
+    {InputCase::kFP8BlockScaling, true, false, ShapeCase::kSameFirst, false},
+    {InputCase::kFP8BlockScaling, true, false, ShapeCase::kSameLast, false},
+    {InputCase::kFP8BlockScaling, false, true, ShapeCase::kAllSame, false},
+    {InputCase::kFP8BlockScaling, false, false, ShapeCase::kAllSame, false},
+    // FP8 Block Scaling with NULL C
+    {InputCase::kFP8BlockScaling, true, false, ShapeCase::kAllSame, true},
 };
 
 INSTANTIATE_TEST_SUITE_P(OperatorTest,
