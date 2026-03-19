@@ -293,7 +293,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         fc2_w_data = fc2_w_data.view(dtype=data_dtype)
         fc2_w_data = fc2_w_data.view(num_groups, fc2_weight_shape[0], weight_k)
         # Wrapper API expects B logical shape (n, k, num_groups).
-        fc2_w_data = fc2_w_data.permute(1, 2, 0)
+        fc2_w_data = fc2_w_data.permute(2, 1, 0)
         fc2_w_scales = (
             grouped_fc2_weight.columnwise_scale_inv
             if fc2_op.single_grouped_parameter
@@ -312,11 +312,11 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             0, 3, 1, 5, 4, 2
         ).contiguous()  # Convert to swizzled layout
         # Expected SFB logical shape for wrapper: (32, 4, n/128, 4, k_sf, num_groups)
-        fc2_w_scales = fc2_w_scales.permute(3, 4, 2, 5, 1, 0)
+        fc2_w_scales = fc2_w_scales.permute(3, 4, 1, 5, 2, 0)
 
         # Kernel scaling factors
         alpha_tensor, norm_const_tensor = self._get_kernel_constants(
-            num_groups=num_groups, device=device
+            num_groups=num_groups, dtype=dtype, device=device
         )
         norm_const_tensor_arg = None if use_nvfp4 else norm_const_tensor
         current_stream = cuda.CUstream(  # pylint: disable=c-extension-no-member
@@ -684,6 +684,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         self,
         *,
         num_groups: int,
+        dtype: torch.dtype,
         device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         global global_alpha_tensor
@@ -692,17 +693,16 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         if (
             alpha_tensor is None
             or alpha_tensor.numel() != num_groups
-            or alpha_tensor.dtype != torch.float32
+            or alpha_tensor.dtype != dtype
             or alpha_tensor.device != device
         ):
             if (
                 global_alpha_tensor is None
                 or global_alpha_tensor.numel() != num_groups
-                or global_alpha_tensor.dtype != torch.float32
+                or global_alpha_tensor.dtype != dtype
                 or global_alpha_tensor.device != device
             ):
-                # cuDNN grouped_gemm_dswiglu reference API uses FP32 alpha/beta/norm_const.
-                global_alpha_tensor = torch.ones(num_groups, dtype=torch.float32, device=device)
+                global_alpha_tensor = torch.ones(num_groups, dtype=dtype, device=device)
             alpha_tensor = global_alpha_tensor
             norm_const_tensor = alpha_tensor[:1]
             self._mxfp8_alpha_tensor = alpha_tensor

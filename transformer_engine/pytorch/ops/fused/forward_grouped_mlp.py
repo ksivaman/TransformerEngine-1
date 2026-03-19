@@ -343,7 +343,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
 
         # Kernel scaling factors
         alpha_tensor, norm_const_tensor = self._get_kernel_constants(
-            num_groups=num_groups, device=device
+            num_groups=num_groups, dtype=dtype, device=device
         )
         norm_const_tensor_arg = None if use_nvfp4 else norm_const_tensor
         current_stream = cuda.CUstream(  # pylint: disable=c-extension-no-member
@@ -359,7 +359,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             split_points,
             alpha_tensor,  # alpha_tensor
             norm_const_tensor=norm_const_tensor_arg,
-            prob_tensor=scales.detach().to(dtype=torch.float32).reshape(-1, 1, 1),
+            prob_tensor=scales.detach().reshape(-1, 1, 1),
             acc_dtype=torch.float32,
             c_dtype=torch.bfloat16,
             d_dtype=torch.bfloat16 if use_nvfp4 else torch.float8_e4m3fn,
@@ -431,9 +431,9 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
 
         # Fused grouped GEMM requires block scales in GEMM-swizzled layout for
         # both operands. Some construction paths drop this metadata bit.
-        if getattr(grouped_fc2_weight, "with_gemm_swizzled_scales", None) is not True:
+        if use_nvfp4 and getattr(grouped_fc2_weight, "with_gemm_swizzled_scales", None) is not True:
             grouped_fc2_weight.with_gemm_swizzled_scales = True
-        if getattr(grouped_fc2_x, "with_gemm_swizzled_scales", None) is not True:
+        if use_nvfp4 and getattr(grouped_fc2_x, "with_gemm_swizzled_scales", None) is not True:
             grouped_fc2_x.with_gemm_swizzled_scales = True
 
         general_grouped_gemm_for_grouped_tensor(
@@ -527,6 +527,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
         self,
         *,
         num_groups: int,
+        dtype: torch.dtype,
         device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         global global_alpha_tensor
@@ -535,17 +536,16 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
         if (
             alpha_tensor is None
             or alpha_tensor.numel() != num_groups
-            or alpha_tensor.dtype != torch.float32
+            or alpha_tensor.dtype != dtype
             or alpha_tensor.device != device
         ):
             if (
                 global_alpha_tensor is None
                 or global_alpha_tensor.numel() != num_groups
-                or global_alpha_tensor.dtype != torch.float32
+                or global_alpha_tensor.dtype != dtype
                 or global_alpha_tensor.device != device
             ):
-                # cuDNN grouped_gemm_swiglu reference API uses FP32 alpha/norm_const.
-                global_alpha_tensor = torch.ones(num_groups, dtype=torch.float32, device=device)
+                global_alpha_tensor = torch.ones(num_groups, dtype=dtype, device=device)
             alpha_tensor = global_alpha_tensor
             norm_const_tensor = alpha_tensor[:1]
             self._mxfp8_alpha_tensor = alpha_tensor
@@ -553,7 +553,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
         elif (
             norm_const_tensor is None
             or norm_const_tensor.numel() != 1
-            or norm_const_tensor.dtype != torch.float32
+            or norm_const_tensor.dtype != dtype
             or norm_const_tensor.device != device
         ):
             norm_const_tensor = alpha_tensor[:1]
