@@ -431,9 +431,9 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
 
         # Fused grouped GEMM requires block scales in GEMM-swizzled layout for
         # both operands. Some construction paths drop this metadata bit.
-        if use_nvfp4 and getattr(grouped_fc2_weight, "with_gemm_swizzled_scales", None) is not True:
+        if use_nvfp4 and getattr(grouped_fc2_weight, "with_gemm_swizzled_scales", None) not in (True, None):
             grouped_fc2_weight.with_gemm_swizzled_scales = True
-        if use_nvfp4 and getattr(grouped_fc2_x, "with_gemm_swizzled_scales", None) is not True:
+        if use_nvfp4 and getattr(grouped_fc2_x, "with_gemm_swizzled_scales", None) not in (True, None):
             grouped_fc2_x.with_gemm_swizzled_scales = True
 
         general_grouped_gemm_for_grouped_tensor(
