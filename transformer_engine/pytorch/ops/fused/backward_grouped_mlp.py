@@ -292,8 +292,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         )
         fc2_w_data = fc2_w_data.view(dtype=data_dtype)
         fc2_w_data = fc2_w_data.view(num_groups, fc2_weight_shape[0], weight_k)
-        # Wrapper API expects B logical shape (n, k, num_groups).
-        fc2_w_data = fc2_w_data.permute(2, 1, 0)
+        fc2_w_data = fc2_w_data.permute(1, 2, 0) if use_nvfp4 else fc2_w_data.permute(2, 1, 0)
         fc2_w_scales = (
             grouped_fc2_weight.columnwise_scale_inv
             if fc2_op.single_grouped_parameter
@@ -311,8 +310,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         fc2_w_scales = fc2_w_scales.permute(
             0, 3, 1, 5, 4, 2
         ).contiguous()  # Convert to swizzled layout
-        # Expected SFB logical shape for wrapper: (32, 4, n/128, 4, k_sf, num_groups)
-        fc2_w_scales = fc2_w_scales.permute(3, 4, 1, 5, 2, 0)
+        fc2_w_scales = fc2_w_scales.permute(3, 4, 2, 5, 1, 0)
 
         # Kernel scaling factors
         alpha_tensor, norm_const_tensor = self._get_kernel_constants(
