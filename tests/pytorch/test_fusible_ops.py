@@ -128,6 +128,7 @@ def make_reference_and_test_tensors(
     test_device: torch.device = "cuda",
     test_is_quantized: bool = False,
     requires_grad: bool = True,
+    nvfp4_with_2d_quantization: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Construct tensors with the same values
 
@@ -170,7 +171,7 @@ def make_reference_and_test_tensors(
         test = NVFP4Quantizer(
             with_rht=False,
             with_post_rht_amax=False,
-            with_2d_quantization=False,
+            with_2d_quantization=nvfp4_with_2d_quantization,
             stochastic_rounding=False,
             with_random_sign_mask=False,
         )(test)
@@ -3309,6 +3310,7 @@ class TestSequentialModules:
                 quantization=quantization,
                 test_dtype=dtype,
                 test_device=device,
+                nvfp4_with_2d_quantization=True,
             )
             fc2_w_ref, fc2_w_test = make_reference_and_test_tensors(
                 (hidden_size, hidden_size),
@@ -3317,6 +3319,7 @@ class TestSequentialModules:
                 quantization=quantization,
                 test_dtype=dtype,
                 test_device=device,
+                nvfp4_with_2d_quantization=True,
             )
             fc1_b_ref, fc1_b_test = None, None
             fc2_b_ref, fc2_b_test = None, None
@@ -3345,12 +3348,38 @@ class TestSequentialModules:
             fc2_bs_test.append(fc2_b_test)
 
         # Reference implementation
+        _ref_dbg = quantization == "nvfp4"
+
+        def _tstats(t: torch.Tensor, row0: bool = False) -> str:
+            """Return stats string for a tensor; safe for empty tensors."""
+            t = t.detach().double()
+            if t.numel() == 0:
+                s = f"shape={list(t.shape)}  (empty)"
+            else:
+                s = (
+                    f"shape={list(t.shape)}"
+                    f"  min={t.min().item():.4g} max={t.abs().max().item():.4g}"
+                    f"  norm={t.norm().item():.4g}"
+                )
+                if row0 and t.dim() >= 2 and t.shape[0] > 0:
+                    s += f"  row0[:8]={t[0, :8].tolist()}"
+            return s
+
+        if _ref_dbg:
+            print(f"[REF_INPUT] {_tstats(x_ref, row0=True)}", flush=True)
+            print(f"[REF_DY_IN] {_tstats(dy_ref)}", flush=True)
+            print(f"[REF_SPLIT_SIZES] {split_sizes.tolist()}", flush=True)
         xs = torch.split(x_ref, split_sizes.tolist())
         probs = torch.split(probs_ref, split_sizes.tolist())
         ys = []
         for group_idx in range(group_size):
             x = xs[group_idx]
+            if _ref_dbg:
+                print(f"[REF_FC1_X group={group_idx}] {_tstats(x, row0=True)}", flush=True)
+                print(f"[REF_FC1_WEIGHTS group={group_idx}] {_tstats(fc1_ws_ref[group_idx], row0=True)}", flush=True)
             x = torch.nn.functional.linear(x, fc1_ws_ref[group_idx], bias=fc1_bs_ref[group_idx])
+            if _ref_dbg:
+                print(f"[REF_FC1_OUT group={group_idx}] {_tstats(x, row0=True)}", flush=True)
             if glu_interleave_size is not None:
                 x = x.reshape(
                     -1,
@@ -3360,13 +3389,52 @@ class TestSequentialModules:
                 )
                 x = x.transpose(1, 2)
                 x = x.reshape(-1, 2 * hidden_size)
+                if _ref_dbg:
+                    print(f"[REF_FC1_INTERLEAVED group={group_idx}] {_tstats(x, row0=True)}", flush=True)
             x1, x2 = x.chunk(2, dim=-1)
             x = torch.nn.functional.silu(x1) * x2
+            if _ref_dbg:
+                print(f"[REF_SWIGLU_OUT group={group_idx}] {_tstats(x, row0=True)}", flush=True)
+                _pr = probs[group_idx].detach().double()
+                if _pr.numel() > 0:
+                    print(
+                        f"[REF_PROBS group={group_idx}] shape={list(_pr.shape)}"
+                        f"  min={_pr.min().item():.4g} max={_pr.max().item():.4g}"
+                        f"  first8={_pr[:8].tolist()}",
+                        flush=True,
+                    )
+                else:
+                    print(f"[REF_PROBS group={group_idx}] shape={list(_pr.shape)}  (empty)", flush=True)
             x = x * probs[group_idx].unsqueeze(-1)
+            if _ref_dbg:
+                print(f"[REF_SWIGLU_SCALED group={group_idx}] {_tstats(x, row0=True)}", flush=True)
             x = torch.nn.functional.linear(x, fc2_ws_ref[group_idx], bias=fc2_bs_ref[group_idx])
+            if _ref_dbg:
+                print(f"[REF_FC2_OUT group={group_idx}] {_tstats(x, row0=True)}", flush=True)
             ys.append(x)
         y_ref = torch.cat(ys)
+        if _ref_dbg:
+            print(f"[REF_Y_FINAL] {_tstats(y_ref)}", flush=True)
         y_ref.backward(dy_ref)
+        if _ref_dbg:
+            print(f"[REF_X_GRAD] {_tstats(x_ref.grad, row0=True)}", flush=True)
+            for _gi in range(group_size):
+                print(f"[REF_FC1_WGRAD group={_gi}] {_tstats(fc1_ws_ref[_gi].grad)}", flush=True)
+                print(f"[REF_FC2_WGRAD group={_gi}] {_tstats(fc2_ws_ref[_gi].grad)}", flush=True)
+            if probs_ref.grad is not None:
+                _probs_grad_split = torch.split(probs_ref.grad.detach().double(), split_sizes.tolist())
+                for _gi in range(group_size):
+                    _pg = _probs_grad_split[_gi]
+                    if _pg.numel() > 0:
+                        print(
+                            f"[REF_PROBS_GRAD group={_gi}] shape={list(_pg.shape)}"
+                            f"  min={_pg.min().item():.4g} max={_pg.abs().max().item():.4g}"
+                            f"  norm={_pg.norm().item():.4g}"
+                            f"  first4={_pg[:4].tolist()}",
+                            flush=True,
+                        )
+                    else:
+                        print(f"[REF_PROBS_GRAD group={_gi}] shape={list(_pg.shape)}  (empty)", flush=True)
 
         # Construct operations
         # TMP WAR to enable RHT for group_quantize
@@ -3415,8 +3483,27 @@ class TestSequentialModules:
                     fc1_weights[group_idx].copy_(fc1_ws_test[group_idx])
                     fc2_weights[group_idx].copy_(fc2_ws_test[group_idx])
                 else:
+                    if _ref_dbg:
+                        _w1_before = fc1_ws_test[group_idx].detach().double()
+                        _w1_q = getattr(fc1, f"weight{group_idx}")
+                        _w1_qtor = getattr(_w1_q, "_quantizer", None)
+                        print(
+                            f"[COPY_FC1_W_BEFORE group={group_idx}] {_tstats(_w1_before, row0=True)}"
+                            f"  quantizer={type(_w1_qtor).__name__}"
+                            f"  with_rht={getattr(_w1_qtor, 'with_rht', 'N/A')}",
+                            flush=True,
+                        )
                     getattr(fc1, f"weight{group_idx}").copy_(fc1_ws_test[group_idx])
+                    if _ref_dbg:
+                        _w1_after = getattr(fc1, f"weight{group_idx}").dequantize().detach().double()
+                        print(f"[COPY_FC1_W_AFTER  group={group_idx}] {_tstats(_w1_after, row0=True)}", flush=True)
+                    if _ref_dbg:
+                        _w2_before = fc2_ws_test[group_idx].detach().double()
+                        print(f"[COPY_FC2_W_BEFORE group={group_idx}] {_tstats(_w2_before, row0=True)}", flush=True)
                     getattr(fc2, f"weight{group_idx}").copy_(fc2_ws_test[group_idx])
+                    if _ref_dbg:
+                        _w2_after = getattr(fc2, f"weight{group_idx}").dequantize().detach().double()
+                        print(f"[COPY_FC2_W_AFTER  group={group_idx}] {_tstats(_w2_after, row0=True)}", flush=True)
                 if bias:
                     getattr(fc1, f"bias{group_idx}").copy_(fc1_bs_test[group_idx])
                     getattr(fc2, f"bias{group_idx}").copy_(fc2_bs_test[group_idx])
@@ -3451,9 +3538,48 @@ class TestSequentialModules:
         del fc1_ws_test, fc1_bs_test, fc2_ws_test, fc2_bs_test
 
         # Fuse ops and perform forward and backward pass
+        if _ref_dbg:
+            _xs_test = torch.split(x_test.detach(), split_sizes.tolist())
+            for _gi in range(group_size):
+                print(f"[TEST_FC1_X group={_gi}] {_tstats(_xs_test[_gi], row0=True)}", flush=True)
+            for _gi in range(group_size):
+                _w = getattr(fc1, f"weight{_gi}")
+                _w_deq = _w.dequantize() if hasattr(_w, "dequantize") else _w.detach()
+                print(f"[TEST_FC1_WEIGHTS group={_gi}] {_tstats(_w_deq, row0=True)}", flush=True)
         with te.autocast(enabled=with_quantization, recipe=recipe):
             y_test = module(x_test, split_sizes, probs_test, split_sizes)
+        if _ref_dbg:
+            print(f"[TEST_Y_FINAL] {_tstats(y_test)}", flush=True)
         y_test.backward(dy_test)
+        if _ref_dbg:
+            print(f"[TEST_X_GRAD] {_tstats(x_test.grad, row0=True)}", flush=True)
+            if probs_test.grad is not None:
+                _pg_test_split = torch.split(probs_test.grad.detach().double(), split_sizes.tolist())
+                for _gi in range(group_size):
+                    _pg_t = _pg_test_split[_gi]
+                    if _pg_t.numel() > 0:
+                        print(
+                            f"[TEST_PROBS_GRAD group={_gi}] shape={list(_pg_t.shape)}"
+                            f"  min={_pg_t.min().item():.4g} max={_pg_t.abs().max().item():.4g}"
+                            f"  norm={_pg_t.norm().item():.4g}"
+                            f"  first4={_pg_t[:4].tolist()}",
+                            flush=True,
+                        )
+                    else:
+                        print(f"[TEST_PROBS_GRAD group={_gi}] shape={list(_pg_t.shape)}  (empty)", flush=True)
+            for _gi in range(group_size):
+                _wg1 = getattr(fc1, f"weight{_gi}").grad
+                _wg2 = getattr(fc2, f"weight{_gi}").grad
+                print(
+                    f"[TEST_FC1_WGRAD group={_gi}]"
+                    f" {'None' if _wg1 is None else _tstats(_wg1)}",
+                    flush=True,
+                )
+                print(
+                    f"[TEST_FC2_WGRAD group={_gi}]"
+                    f" {'None' if _wg2 is None else _tstats(_wg2)}",
+                    flush=True,
+                )
 
         # Check for expected fusions
         if (
