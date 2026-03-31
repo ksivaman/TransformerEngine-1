@@ -603,6 +603,41 @@ def round_up_to_nearest_multiple(value, multiple):
     return ((value + multiple - 1) // multiple) * multiple
 
 
+def validate_mxfp8_nvfp4_scale_inv_align(
+    rowwise_scale_inv_align: Tuple[int, int],
+    columnwise_scale_inv_align: Tuple[int, int],
+    *,
+    is_nvfp4: bool,
+) -> None:
+    """Check scale_inv padding alignments for MXFP8 or NVFP4 quantizers.
+
+    Rowwise layouts use (multiple of 128, multiple of 4). Columnwise axis
+    requirements match swizzle kernels and differ between MXFP8 and NVFP4;
+    see ``nvte_tensor_set_scale_inv_padding``.
+    """
+    ra0, ra1 = rowwise_scale_inv_align
+    ca0, ca1 = columnwise_scale_inv_align
+    if ra0 <= 0 or ra1 <= 0 or ca0 <= 0 or ca1 <= 0:
+        raise ValueError("scale_inv alignments must be positive")
+    if ra0 % 128 != 0 or ra1 % 4 != 0:
+        raise ValueError(
+            "rowwise_scale_inv_align must be (multiple of 128, multiple of 4), "
+            f"got {rowwise_scale_inv_align}"
+        )
+    if is_nvfp4:
+        if ca0 % 128 != 0 or ca1 % 4 != 0:
+            raise ValueError(
+                "NVFP4 columnwise_scale_inv_align must be (multiple of 128, multiple of 4), "
+                f"got {columnwise_scale_inv_align}"
+            )
+    else:
+        if ca0 % 4 != 0 or ca1 % 128 != 0:
+            raise ValueError(
+                "MXFP8 columnwise_scale_inv_align must be (multiple of 4, multiple of 128), "
+                f"got {columnwise_scale_inv_align}"
+            )
+
+
 def needs_quantized_gemm(obj, rowwise=True):
     """Used to check if obj will need quantized gemm or normal gemm."""
     if isinstance(obj, DebugQuantizedTensor):

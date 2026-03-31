@@ -174,6 +174,18 @@ struct Tensor {
    */
   bool with_gemm_swizzled_scales = false;
 
+  /*! \brief Rowwise scale_inv matrix axis padding for MXFP8/NVFP4 (outer, inner).
+   *
+   *  Defaults match legacy TE: (128, 4). Inner must be a multiple of 4; outer a
+   *  multiple of 128 for swizzle kernels. See nvte_tensor_set_scale_inv_padding.
+   */
+  uint32_t scale_inv_rowwise_align[2] = {128u, 4u};
+  /*! \brief Columnwise scale_inv matrix axis padding for MXFP8/NVFP4 (outer, inner).
+   *
+   *  Defaults: (4, 128). First axis must be a multiple of 4; second of 128.
+   */
+  uint32_t scale_inv_columnwise_align[2] = {4u, 128u};
+
   /*! Map from NVTETensorParam to parameter sizes */
   static constexpr size_t attr_sizes[] = {
       sizeof(NVTEBasicTensor),  // kNVTERowwiseData
@@ -199,6 +211,10 @@ struct Tensor {
     columnwise_scale_inv.clear();
     scaling_mode = NVTE_DELAYED_TENSOR_SCALING;
     with_gemm_swizzled_scales = false;
+    scale_inv_rowwise_align[0] = 128u;
+    scale_inv_rowwise_align[1] = 4u;
+    scale_inv_columnwise_align[0] = 4u;
+    scale_inv_columnwise_align[1] = 128u;
   }
 
   explicit operator NVTETensor() const noexcept { return nvte_tensor; }

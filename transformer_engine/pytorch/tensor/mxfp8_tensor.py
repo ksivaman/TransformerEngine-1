@@ -16,7 +16,11 @@ from transformer_engine_torch import DType as TE_DType
 
 from transformer_engine.common.recipe import MXFP8BlockScaling, Recipe
 from ..constants import MXFP8_BLOCK_SCALING_SIZE
-from ..utils import devices_match, round_up_to_nearest_multiple
+from ..utils import (
+    devices_match,
+    round_up_to_nearest_multiple,
+    validate_mxfp8_nvfp4_scale_inv_align,
+)
 from .storage.mxfp8_tensor_storage import MXFP8TensorStorage, _FromMXFP8Func
 from ..quantized_tensor import QuantizedTensor, Quantizer
 from ._quantization_helpers import _IdentityFunc
@@ -41,9 +45,21 @@ class MXFP8Quantizer(Quantizer):
         *,
         rowwise: bool = True,
         columnwise: bool = True,
+        rowwise_scale_inv_align: Tuple[int, int] = (128, 4),
+        columnwise_scale_inv_align: Tuple[int, int] = (4, 128),
     ) -> None:
         super().__init__(rowwise=rowwise, columnwise=columnwise)
         self.dtype = fp8_dtype
+        validate_mxfp8_nvfp4_scale_inv_align(
+            rowwise_scale_inv_align,
+            columnwise_scale_inv_align,
+            is_nvfp4=False,
+        )
+        self.rowwise_scale_inv_align = (int(rowwise_scale_inv_align[0]), int(rowwise_scale_inv_align[1]))
+        self.columnwise_scale_inv_align = (
+            int(columnwise_scale_inv_align[0]),
+            int(columnwise_scale_inv_align[1]),
+        )
 
     def copy(self) -> MXFP8Quantizer:
         """Create shallow copy"""
@@ -52,6 +68,8 @@ class MXFP8Quantizer(Quantizer):
             fp8_dtype=self.dtype,
             rowwise=self.rowwise_usage,
             columnwise=self.columnwise_usage,
+            rowwise_scale_inv_align=self.rowwise_scale_inv_align,
+            columnwise_scale_inv_align=self.columnwise_scale_inv_align,
         )
         quantizer.internal = self.internal
         quantizer.optimize_for_gemm = self.optimize_for_gemm
@@ -123,9 +141,10 @@ class MXFP8Quantizer(Quantizer):
         scale_inv = None
         if self.rowwise_usage:
             data = torch.empty(shape, dtype=torch.uint8, device=device, pin_memory=pin_memory)
+            rs0, rs1 = self.rowwise_scale_inv_align
             scale_inv = torch.empty(
-                round_up_to_nearest_multiple(math.prod(shape[:-1]), 128),
-                round_up_to_nearest_multiple(shape[-1] // MXFP8_BLOCK_SCALING_SIZE, 4),
+                round_up_to_nearest_multiple(math.prod(shape[:-1]), rs0),
+                round_up_to_nearest_multiple(shape[-1] // MXFP8_BLOCK_SCALING_SIZE, rs1),
                 dtype=torch.uint8,
                 device=device,
                 pin_memory=pin_memory,
@@ -138,9 +157,12 @@ class MXFP8Quantizer(Quantizer):
             columnwise_data = torch.empty(
                 shape, dtype=torch.uint8, device=device, pin_memory=pin_memory
             )
+            cs0, cs1 = self.columnwise_scale_inv_align
             columnwise_scale_inv = torch.empty(
-                round_up_to_nearest_multiple(math.prod(shape[:-1]) // MXFP8_BLOCK_SCALING_SIZE, 4),
-                round_up_to_nearest_multiple(shape[-1], 128),
+                round_up_to_nearest_multiple(
+                    math.prod(shape[:-1]) // MXFP8_BLOCK_SCALING_SIZE, cs0
+                ),
+                round_up_to_nearest_multiple(shape[-1], cs1),
                 dtype=torch.uint8,
                 device=device,
                 pin_memory=pin_memory,
@@ -189,18 +211,21 @@ class MXFP8Quantizer(Quantizer):
         Swizzle kernel will be performed before GEMM to suit the need of CuBLAS.
         CuBLAS doc: https://docs.nvidia.com/cuda/cublas/index.html#d-block-scaling-factors-layout
         """
+        rs0, rs1 = self.rowwise_scale_inv_align
+        cs0, cs1 = self.columnwise_scale_inv_align
         if columnwise:
             # Columnwise: scale_inv shape is [prod(shape[:-1]) // BLOCK_SIZE, shape[-1]]
-            # with padding to multiples of [4, 128]
+            # with per-axis padding from ``columnwise_scale_inv_align``.
             return (
-                round_up_to_nearest_multiple(math.prod(shape[:-1]) // MXFP8_BLOCK_SCALING_SIZE, 4),
-                round_up_to_nearest_multiple(shape[-1], 128),
+                round_up_to_nearest_multiple(
+                    math.prod(shape[:-1]) // MXFP8_BLOCK_SCALING_SIZE, cs0
+                ),
+                round_up_to_nearest_multiple(shape[-1], cs1),
             )
         # Rowwise: scale_inv shape is [prod(shape[:-1]), shape[-1] // BLOCK_SIZE]
-        # with padding to multiples of [128, 4]
         return (
-            round_up_to_nearest_multiple(math.prod(shape[:-1]), 128),
-            round_up_to_nearest_multiple(shape[-1] // MXFP8_BLOCK_SCALING_SIZE, 4),
+            round_up_to_nearest_multiple(math.prod(shape[:-1]), rs0),
+            round_up_to_nearest_multiple(shape[-1] // MXFP8_BLOCK_SCALING_SIZE, rs1),
         )
 
     def get_columnwise_shape(self, rowwise_data_shape: Tuple[int, ...]) -> Tuple[int, ...]:
@@ -711,21 +736,25 @@ class MXFP8Tensor(MXFP8TensorStorage, QuantizedTensor):
             all_gather_outputs[-2:] if columnwise_usage else (None, None)
         )
 
-        # Add padding to scale_inv tensors to be multiples of [128, 4]for rowwise and [4, 128] for columnwise
+        # Pad scale_inv to quantizer alignment (legacy defaults: rowwise 128x4, columnwise 4x128).
         if rowwise_scale_inv is not None:
-            # Pad rowwise_scale_inv to be a multiple of [128, 4]
-            current_shape = rowwise_scale_inv.shape
-            pad_dim0 = (128 - current_shape[0] % 128) % 128
-            if pad_dim0 > 0:
-                rowwise_scale_inv = torch.nn.functional.pad(rowwise_scale_inv, (0, 0, 0, pad_dim0))
+            ra0, ra1 = self._quantizer.rowwise_scale_inv_align
+            s0, s1 = rowwise_scale_inv.shape
+            pad_dim0 = (ra0 - s0 % ra0) % ra0
+            pad_dim1 = (ra1 - s1 % ra1) % ra1
+            if pad_dim0 > 0 or pad_dim1 > 0:
+                rowwise_scale_inv = torch.nn.functional.pad(
+                    rowwise_scale_inv, (0, pad_dim1, 0, pad_dim0)
+                )
 
         if columnwise_scale_inv is not None:
-            # Pad columnwise_scale_inv to be a multiple of [4, 128]
-            current_shape = columnwise_scale_inv.shape
-            pad_dim0 = (4 - current_shape[0] % 4) % 4
-            if pad_dim0 > 0:
+            ca0, ca1 = self._quantizer.columnwise_scale_inv_align
+            s0, s1 = columnwise_scale_inv.shape
+            pad_dim0 = (ca0 - s0 % ca0) % ca0
+            pad_dim1 = (ca1 - s1 % ca1) % ca1
+            if pad_dim0 > 0 or pad_dim1 > 0:
                 columnwise_scale_inv = torch.nn.functional.pad(
-                    columnwise_scale_inv, (0, 0, 0, pad_dim0)
+                    columnwise_scale_inv, (0, pad_dim1, 0, pad_dim0)
                 )
 
         if out is not None:

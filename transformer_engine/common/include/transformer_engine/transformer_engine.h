@@ -319,6 +319,19 @@ void nvte_get_tensor_param_v2(const NVTETensor tensor, NVTETensorParam param, vo
  */
 NVTEScalingMode nvte_tensor_scaling_mode(const NVTETensor tensor);
 
+/*! \brief Set rowwise/columnwise scale_inv padding alignment for MXFP8 or NVFP4 tensors.
+ *
+ *  Rowwise scale_inv uses multiples of (rowwise_align_dim0, rowwise_align_dim1); default
+ *  (128, 4) for both modes (first axis multiple of 128, second of 4 for swizzle).
+ *
+ *  Columnwise depends on scaling_mode: for MXFP8 default (4, 128); for NVFP4 default (128, 4).
+ *  nvte_tensor_set_scale_inv_padding enforces the corresponding divisibility rules.
+ */
+void nvte_tensor_set_scale_inv_padding(NVTETensor tensor, uint32_t rowwise_align_dim0,
+                                       uint32_t rowwise_align_dim1,
+                                       uint32_t columnwise_align_dim0,
+                                       uint32_t columnwise_align_dim1);
+
 /*! \struct NVTETensorPack
     \brief Pack of tensors, generally used for auxiliary outputs.
  */

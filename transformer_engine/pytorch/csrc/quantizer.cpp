@@ -6,6 +6,8 @@
 
 #include <pybind.h>
 
+#include <cstdint>
+
 #include "common.h"
 #include "common/util/system.h"
 #include "pybind.h"
@@ -58,6 +60,30 @@ std::vector<T> convert_shape_for_fp4(const std::vector<T>& shape) {
   }
   ret.push_back(shape.back() / 2);
   return ret;
+}
+
+void load_scale_inv_align_from_py_quantizer(const py::handle& quantizer, uint32_t rowwise[2],
+                                            uint32_t columnwise[2],
+                                            const uint32_t columnwise_default[2]) {
+  auto read_opt_pair = [&](const char* attr, uint32_t out[2], const uint32_t defval[2]) {
+    if (py::hasattr(quantizer, attr)) {
+      py::tuple t = quantizer.attr(attr).cast<py::tuple>();
+      NVTE_CHECK(t.size() == 2, "Expected a 2-tuple for ", attr);
+      const auto a0 = t[0].cast<int64_t>();
+      const auto a1 = t[1].cast<int64_t>();
+      NVTE_CHECK(a0 > 0 && a1 > 0, "scale_inv alignments must be positive (", attr, ")");
+      NVTE_CHECK(a0 <= static_cast<int64_t>(UINT32_MAX) && a1 <= static_cast<int64_t>(UINT32_MAX),
+                 "scale_inv alignment too large (", attr, ")");
+      out[0] = static_cast<uint32_t>(a0);
+      out[1] = static_cast<uint32_t>(a1);
+    } else {
+      out[0] = defval[0];
+      out[1] = defval[1];
+    }
+  };
+  const uint32_t row_default[2] = {128u, 4u};
+  read_opt_pair("rowwise_scale_inv_align", rowwise, row_default);
+  read_opt_pair("columnwise_scale_inv_align", columnwise, columnwise_default);
 }
 
 std::optional<at::Tensor> build_grouped_tensor_offsets(const size_t num_tensors,
@@ -1326,9 +1352,16 @@ std::vector<size_t> Float8BlockQuantizer::get_scale_shape(const std::vector<size
 
 MXFP8Quantizer::MXFP8Quantizer(const py::handle& quantizer) : Quantizer(quantizer) {
   this->dtype = quantizer.attr("dtype").cast<DType>();
+  const uint32_t mxfp8_columnwise_default[2] = {4u, 128u};
+  load_scale_inv_align_from_py_quantizer(quantizer, scale_inv_rowwise_align,
+                                           scale_inv_columnwise_align, mxfp8_columnwise_default);
 }
 
-void MXFP8Quantizer::set_quantization_params(TensorWrapper* tensor) const {}
+void MXFP8Quantizer::set_quantization_params(TensorWrapper* tensor) const {
+  nvte_tensor_set_scale_inv_padding(tensor->data(), scale_inv_rowwise_align[0],
+                                    scale_inv_rowwise_align[1], scale_inv_columnwise_align[0],
+                                    scale_inv_columnwise_align[1]);
+}
 
 std::pair<TensorWrapper, py::object> MXFP8Quantizer::create_tensor(const std::vector<size_t>& shape,
                                                                    DType dtype) const {
@@ -1675,13 +1708,14 @@ std::vector<size_t> MXFP8Quantizer::get_scale_shape(const std::vector<size_t>& s
 
   if (rowwise_usage) {
     // rowwise scaling factor shape
-    size_t sinv0 = roundup(numel / last_dim, 128);
-    size_t sinv1 = roundup(last_dim / MXFP8_BLOCK_SIZE, 4);
+    size_t sinv0 = roundup(numel / last_dim, scale_inv_rowwise_align[0]);
+    size_t sinv1 = roundup(last_dim / MXFP8_BLOCK_SIZE, scale_inv_rowwise_align[1]);
     scale_shape = {sinv0, sinv1};
   } else {
     // columnwise scaling factor shape
-    size_t sinv0 = roundup(numel / (last_dim * MXFP8_BLOCK_SIZE), 4);
-    size_t sinv1 = roundup(last_dim, 128);
+    size_t sinv0 =
+        roundup(numel / (last_dim * MXFP8_BLOCK_SIZE), scale_inv_columnwise_align[0]);
+    size_t sinv1 = roundup(last_dim, scale_inv_columnwise_align[1]);
     scale_shape = {sinv0, sinv1};
   }
   return scale_shape;
@@ -1707,6 +1741,9 @@ NVFP4Quantizer::NVFP4Quantizer(const py::handle& quantizer) : Quantizer(quantize
 
   this->rht_matrix_random_sign_mask_t = quantizer.attr("rht_matrix_random_sign_mask_t").cast<int>();
   this->rht_matrix = quantizer.attr("rht_matrix").cast<at::Tensor>();
+  const uint32_t nvfp4_columnwise_default[2] = {128u, 4u};
+  load_scale_inv_align_from_py_quantizer(quantizer, scale_inv_rowwise_align,
+                                         scale_inv_columnwise_align, nvfp4_columnwise_default);
 }
 
 void NVFP4Quantizer::set_quantization_params(TensorWrapper* tensor) const {
@@ -1721,6 +1758,9 @@ void NVFP4Quantizer::set_quantization_params(TensorWrapper* tensor) const {
                            rowwise_data.shape);
   tensor->set_columnwise_data(columnwise_data.data_ptr, static_cast<DType>(columnwise_data.dtype),
                               columnwise_data.shape);
+  nvte_tensor_set_scale_inv_padding(tensor->data(), scale_inv_rowwise_align[0],
+                                    scale_inv_rowwise_align[1], scale_inv_columnwise_align[0],
+                                    scale_inv_columnwise_align[1]);
 }
 
 std::pair<TensorWrapper, py::object> NVFP4Quantizer::create_tensor(const std::vector<size_t>& shape,
@@ -2450,13 +2490,14 @@ std::vector<size_t> NVFP4Quantizer::get_scale_shape(const std::vector<size_t>& s
 
   if (rowwise_usage) {
     // rowwise scaling factor shape
-    size_t sinv0 = roundup(flat_first_dim, 128);
-    size_t sinv1 = roundup(last_dim / NVFP4_BLOCK_SIZE, 4);
+    size_t sinv0 = roundup(flat_first_dim, scale_inv_rowwise_align[0]);
+    size_t sinv1 = roundup(last_dim / NVFP4_BLOCK_SIZE, scale_inv_rowwise_align[1]);
     scale_shape = {sinv0, sinv1};
   } else {
     // columnwise scaling factor shape
-    size_t sinv0 = roundup(last_dim, 128);
-    size_t sinv1 = roundup(flat_first_dim / NVFP4_BLOCK_SIZE, 4);
+    size_t sinv0 = roundup(last_dim, scale_inv_columnwise_align[0]);
+    size_t sinv1 =
+        roundup(flat_first_dim / NVFP4_BLOCK_SIZE, scale_inv_columnwise_align[1]);
     scale_shape = {sinv0, sinv1};
   }
   return scale_shape;

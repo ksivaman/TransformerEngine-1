@@ -291,6 +291,8 @@ class Float8BlockQuantizer : public Quantizer {
 class MXFP8Quantizer : public Quantizer {
  public:
   DType dtype;
+  uint32_t scale_inv_rowwise_align[2] = {128u, 4u};
+  uint32_t scale_inv_columnwise_align[2] = {4u, 128u};
 
   explicit MXFP8Quantizer(const py::handle& quantizer);
 
@@ -330,6 +332,8 @@ class NVFP4Quantizer : public Quantizer {
 
   int rht_matrix_random_sign_mask_t;
   at::Tensor rht_matrix;
+  uint32_t scale_inv_rowwise_align[2] = {128u, 4u};
+  uint32_t scale_inv_columnwise_align[2] = {128u, 4u};
 
   explicit NVFP4Quantizer(const py::handle& quantizer);
 

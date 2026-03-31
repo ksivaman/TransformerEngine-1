@@ -20,6 +20,7 @@ from ..utils import (
     canonicalize_process_group,
     devices_match,
     round_up_to_nearest_multiple,
+    validate_mxfp8_nvfp4_scale_inv_align,
 )
 
 from .storage.nvfp4_tensor_storage import NVFP4TensorStorage, _FromNVFP4Func
@@ -144,9 +145,21 @@ class NVFP4Quantizer(Quantizer):
         with_2d_quantization: bool = False,
         stochastic_rounding: bool = False,
         with_random_sign_mask: bool = True,
+        rowwise_scale_inv_align: Tuple[int, int] = (128, 4),
+        columnwise_scale_inv_align: Tuple[int, int] = (128, 4),
     ) -> None:
         super().__init__(rowwise=rowwise, columnwise=columnwise)
         self.dtype = fp4_dtype
+        validate_mxfp8_nvfp4_scale_inv_align(
+            rowwise_scale_inv_align,
+            columnwise_scale_inv_align,
+            is_nvfp4=True,
+        )
+        self.rowwise_scale_inv_align = (int(rowwise_scale_inv_align[0]), int(rowwise_scale_inv_align[1]))
+        self.columnwise_scale_inv_align = (
+            int(columnwise_scale_inv_align[0]),
+            int(columnwise_scale_inv_align[1]),
+        )
         self.with_rht = with_rht
         self.with_post_rht_amax = with_post_rht_amax
         self.with_amax_reduction = with_amax_reduction
@@ -198,6 +211,8 @@ class NVFP4Quantizer(Quantizer):
             with_post_rht_amax=self.with_post_rht_amax,
             with_2d_quantization=self.with_2d_quantization,
             stochastic_rounding=self.stochastic_rounding,
+            rowwise_scale_inv_align=self.rowwise_scale_inv_align,
+            columnwise_scale_inv_align=self.columnwise_scale_inv_align,
         )
         quantizer.internal = self.internal
         quantizer.optimize_for_gemm = self.optimize_for_gemm
@@ -243,17 +258,17 @@ class NVFP4Quantizer(Quantizer):
         Swizzle kernel will be performed before GEMM to suit the need of CuBLAS.
         CuBLAS doc: https://docs.nvidia.com/cuda/cublas/index.html#d-block-scaling-factors-layout
         """
-        M, K = 1, 1
         M = math.prod(shape[:-1])
         K = shape[-1]
+        rs0, rs1 = self.rowwise_scale_inv_align
+        cs0, cs1 = self.columnwise_scale_inv_align
 
         if columnwise:
-            outer = round_up_to_nearest_multiple(K, 128)
-            inner = round_up_to_nearest_multiple(math.ceil(M / NVFP4_BLOCK_SCALING_SIZE), 4)
+            outer = round_up_to_nearest_multiple(K, cs0)
+            inner = round_up_to_nearest_multiple(math.ceil(M / NVFP4_BLOCK_SCALING_SIZE), cs1)
             return (outer, inner)
-        # rowwise
-        outer = round_up_to_nearest_multiple(M, 128)
-        inner = round_up_to_nearest_multiple(math.ceil(K / NVFP4_BLOCK_SCALING_SIZE), 4)
+        outer = round_up_to_nearest_multiple(M, rs0)
+        inner = round_up_to_nearest_multiple(math.ceil(K / NVFP4_BLOCK_SCALING_SIZE), rs1)
         return (outer, inner)
 
     @staticmethod
