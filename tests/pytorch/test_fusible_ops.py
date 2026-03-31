@@ -3571,6 +3571,136 @@ class TestSequentialModules:
             assert_close(fc1.weight.grad, fc1_w_ref_grad, **tols)
             assert_close(fc2.weight.grad, fc2_w_ref_grad, **tols)
 
+    def test_grouped_mlp_all_experts_zero_tokens(self, *, device: torch.device = "cuda") -> None:
+        """Grouped MLP when every expert has zero tokens (split_sizes / first_dims all 0).
+
+        Covers the MoE edge case where a rank receives no tokens: grouped tensors have
+        M=0 for each expert. Forward and backward should complete without error; outputs
+        and activations are empty.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required")
+        dtype = torch.bfloat16 if is_bf16_available() else torch.float16
+        group_size = 4
+        hidden_size = 256
+        bias = False
+
+        split_sizes = torch.zeros(group_size, dtype=torch.int, device=device)
+        in_shape = (0, hidden_size)
+        out_shape = in_shape
+        maybe_skip_quantization(None, dims=in_shape, device=device, dtype=dtype)
+        recipe = make_recipe(None)
+
+        x_ref, x_test = make_reference_and_test_tensors(
+            in_shape,
+            min=-0.25,
+            max=0.25,
+            quantization=None,
+            test_dtype=dtype,
+            test_device=device,
+        )
+        dy_ref, dy_test = make_reference_and_test_tensors(
+            out_shape,
+            min=-0.25,
+            max=0.25,
+            quantization=None,
+            test_dtype=dtype,
+            test_device=device,
+            requires_grad=False,
+        )
+        probs_ref, probs_test = make_reference_and_test_tensors(
+            (in_shape[0],),
+            test_dtype=dtype,
+            test_device=device,
+        )
+        fc1_ws_ref, fc1_ws_test = [], []
+        fc2_ws_ref, fc2_ws_test = [], []
+        for _ in range(group_size):
+            fc1_w_ref, fc1_w_test = make_reference_and_test_tensors(
+                (2 * hidden_size, hidden_size),
+                min=-0.25,
+                max=0.25,
+                quantization=None,
+                test_dtype=dtype,
+                test_device=device,
+            )
+            fc2_w_ref, fc2_w_test = make_reference_and_test_tensors(
+                (hidden_size, hidden_size),
+                min=-0.25,
+                max=0.25,
+                quantization=None,
+                test_dtype=dtype,
+                test_device=device,
+            )
+            fc1_ws_ref.append(fc1_w_ref)
+            fc1_ws_test.append(fc1_w_test)
+            fc2_ws_ref.append(fc2_w_ref)
+            fc2_ws_test.append(fc2_w_test)
+
+        xs = torch.split(x_ref, split_sizes.tolist())
+        probs = torch.split(probs_ref, split_sizes.tolist())
+        ys = []
+        for group_idx in range(group_size):
+            x = xs[group_idx]
+            x = torch.nn.functional.linear(x, fc1_ws_ref[group_idx], bias=None)
+            x1, x2 = x.chunk(2, dim=-1)
+            x = torch.nn.functional.silu(x1) * x2
+            x = x * probs[group_idx].unsqueeze(-1)
+            x = torch.nn.functional.linear(x, fc2_ws_ref[group_idx], bias=None)
+            ys.append(x)
+        y_ref = torch.cat(ys)
+        y_ref.backward(dy_ref)
+
+        with te.quantized_model_init(enabled=False, recipe=recipe):
+            fc1 = te_ops.GroupedLinear(
+                group_size,
+                hidden_size,
+                2 * hidden_size,
+                bias=bias,
+                device=device,
+                dtype=dtype,
+                single_grouped_weight=False,
+                single_grouped_bias=False,
+                accumulate_into_main_grad=False,
+                delay_wgrad_compute=False,
+            )
+            fc2 = te_ops.GroupedLinear(
+                group_size,
+                hidden_size,
+                hidden_size,
+                bias=bias,
+                device=device,
+                dtype=dtype,
+                single_grouped_weight=False,
+                single_grouped_bias=False,
+                accumulate_into_main_grad=False,
+                delay_wgrad_compute=False,
+            )
+            module = te_ops.Sequential(
+                fc1,
+                te_ops.ScaledSwiGLU(glu_interleave_size=None),
+                fc2,
+            )
+
+        with torch.no_grad():
+            for group_idx in range(group_size):
+                getattr(fc1, f"weight{group_idx}").copy_(fc1_ws_test[group_idx])
+                getattr(fc2, f"weight{group_idx}").copy_(fc2_ws_test[group_idx])
+        del fc1_ws_test, fc2_ws_test
+
+        with te.autocast(enabled=False, recipe=recipe):
+            y_test = module(x_test, split_sizes, probs_test, split_sizes)
+        y_test.backward(dy_test)
+
+        tols = {"rtol": 0.125, "atol": 0.25}
+        assert y_test.shape == y_ref.shape == (0, hidden_size)
+        assert_close(y_test, y_ref, **tols)
+        assert_close_grads(x_test, x_ref, **tols)
+        assert_close_grads(probs_test, probs_ref, **tols)
+        for group_idx in range(group_size):
+            assert_close_grads(getattr(fc2, f"weight{group_idx}"), fc2_ws_ref[group_idx], **tols)
+            assert_close_grads(getattr(fc1, f"weight{group_idx}"), fc1_ws_ref[group_idx], **tols)
+
     @pytest.mark.parametrize("dtype", _dtypes)
     @pytest.mark.parametrize("single_grouped_weight", (False, True))
     @pytest.mark.parametrize("accumulate_into_main_grad", (False, True))
