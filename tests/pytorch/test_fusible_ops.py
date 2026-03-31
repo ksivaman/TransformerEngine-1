@@ -3226,15 +3226,30 @@ class TestSequentialModules:
 
         # Check values
         tols = {"rtol": 0.25, "atol": 0.5}  # Loose tols for sanity checking
-        torch.testing.assert_close(to_cpu(y_test), y_ref, **tols)
-        torch.testing.assert_close(to_cpu(x_test.grad), x_ref.grad, **tols)
-        torch.testing.assert_close(to_cpu(norm.weight.grad), norm_w_ref.grad, **tols)
-        torch.testing.assert_close(to_cpu(norm.bias.grad), norm_b_ref.grad, **tols)
-        torch.testing.assert_close(to_cpu(ffn2.weight.grad), w2_ref.grad, **tols)
-        torch.testing.assert_close(to_cpu(ffn1.weight.grad), w1_ref.grad, **tols)
+
+        def _check(name, test_t, ref_t):
+            t = to_cpu(test_t)
+            r = ref_t
+            abs_diff = (t.double() - r.double()).abs()
+            rel_diff = abs_diff / (r.double().abs() + 1e-8)
+            print(
+                f"[CHECK {name}] max_abs={abs_diff.max().item():.4g}"
+                f"  max_rel={rel_diff.max().item():.4g}"
+                f"  atol=0.5 rtol=0.25",
+                flush=True,
+            )
+            torch.testing.assert_close(t, r, **tols)
+            print(f"[CHECK {name}] PASSED", flush=True)
+
+        _check("y (forward)", y_test, y_ref)
+        _check("x.grad", x_test.grad, x_ref.grad)
+        _check("norm.weight.grad", norm.weight.grad, norm_w_ref.grad)
+        _check("norm.bias.grad", norm.bias.grad, norm_b_ref.grad)
+        _check("ffn2.weight.grad", ffn2.weight.grad, w2_ref.grad)
+        _check("ffn1.weight.grad", ffn1.weight.grad, w1_ref.grad)
         if bias:
-            torch.testing.assert_close(to_cpu(ffn1.bias.grad), b1_ref.grad, **tols)
-            torch.testing.assert_close(to_cpu(ffn2.bias.grad), b2_ref.grad, **tols)
+            _check("ffn1.bias.grad", ffn1.bias.grad, b1_ref.grad)
+            _check("ffn2.bias.grad", ffn2.bias.grad, b2_ref.grad)
 
     @pytest.mark.parametrize("bias", (False, True))
     @pytest.mark.parametrize("dtype", _dtypes)
@@ -3259,7 +3274,7 @@ class TestSequentialModules:
         """GroupedLinear + ScaledSwiGLU + GroupedLinear"""
 
         # Split sizes
-        split_sizes = [split_alignment * (i) for i in range(group_size)]
+        split_sizes = [split_alignment * (i + 1) for i in range(group_size)]
         random.shuffle(split_sizes)
         split_sizes = torch.tensor(split_sizes, dtype=torch.int, device=device)
 
@@ -3372,6 +3387,8 @@ class TestSequentialModules:
         xs = torch.split(x_ref, split_sizes.tolist())
         probs = torch.split(probs_ref, split_sizes.tolist())
         ys = []
+        _fc1_out_interleaved_refs = []
+        _fc2_in_refs = []
         for group_idx in range(group_size):
             x = xs[group_idx]
             if _ref_dbg:
@@ -3391,6 +3408,8 @@ class TestSequentialModules:
                 x = x.reshape(-1, 2 * hidden_size)
                 if _ref_dbg:
                     print(f"[REF_FC1_INTERLEAVED group={group_idx}] {_tstats(x, row0=True)}", flush=True)
+            x.retain_grad()
+            _fc1_out_interleaved_refs.append(x)
             x1, x2 = x.chunk(2, dim=-1)
             x = torch.nn.functional.silu(x1) * x2
             if _ref_dbg:
@@ -3408,6 +3427,8 @@ class TestSequentialModules:
             x = x * probs[group_idx].unsqueeze(-1)
             if _ref_dbg:
                 print(f"[REF_SWIGLU_SCALED group={group_idx}] {_tstats(x, row0=True)}", flush=True)
+            x.retain_grad()
+            _fc2_in_refs.append(x)
             x = torch.nn.functional.linear(x, fc2_ws_ref[group_idx], bias=fc2_bs_ref[group_idx])
             if _ref_dbg:
                 print(f"[REF_FC2_OUT group={group_idx}] {_tstats(x, row0=True)}", flush=True)
@@ -3415,9 +3436,136 @@ class TestSequentialModules:
         y_ref = torch.cat(ys)
         if _ref_dbg:
             print(f"[REF_Y_FINAL] {_tstats(y_ref)}", flush=True)
+        if _ref_dbg:
+            import sys as _ref_sys
+            _dy_off = 0
+            for _gi in range(group_size):
+                _sz = split_sizes[_gi].item()
+                _w2 = fc2_ws_ref[_gi].detach().double()  # (out_features, in_features)
+                _dy_g = dy_ref[_dy_off:_dy_off + _sz].detach().double()  # (sz, out_features)
+                _ref_sys.stdout.write(
+                    f"[REF_FC2_W group={_gi}] shape={list(_w2.shape)}"
+                    f"  row0_col0_8={_w2[0, :8].tolist()}"
+                    f"  row0_col32_40={_w2[0, 32:40].tolist()}"
+                    f"  row0_col128_136={_w2[0, 128:136].tolist()}\n"
+                )
+                # Per-block-16 amax of W^T (columnwise direction: n=in_features, k=out_features)
+                # W^T shape: (in_features, out_features) = w2.T
+                _w2t = _w2.T.float()  # (in_features, out_features)
+                _w2t_blocks = _w2t.reshape(-1, 16).abs().amax(dim=1)  # per-block-16 amax
+                _ref_sys.stdout.write(
+                    f"[REF_FC2_W_SCALES group={_gi}] n_blocks={_w2t_blocks.numel()}"
+                    f"  first8={_w2t_blocks[:8].tolist()}"
+                    f"  blk32_40={_w2t_blocks[32:40].tolist()}"
+                    f"  blk128_136={_w2t_blocks[128:136].tolist() if _w2t_blocks.numel() > 136 else []}\n"
+                )
+                _ref_sys.stdout.write(
+                    f"[REF_FC2_DY group={_gi}] shape={list(_dy_g.shape)}"
+                    f"  row0_col0_8={_dy_g[0, :8].tolist()}"
+                    f"  row0_col32_40={_dy_g[0, 32:40].tolist()}"
+                    f"  row0_col128_136={_dy_g[0, 128:136].tolist()}\n"
+                )
+                # Per-block-16 amax of dy_g (rowwise: m=sz, k=out_features)
+                _dy_blocks = _dy_g.float().reshape(-1, 16).abs().amax(dim=1)
+                _ref_sys.stdout.write(
+                    f"[REF_FC2_DY_SCALES group={_gi}] n_blocks={_dy_blocks.numel()}"
+                    f"  first8={_dy_blocks[:8].tolist()}"
+                    f"  blk32_40={_dy_blocks[32:40].tolist()}"
+                    f"  blk128_136={_dy_blocks[128:136].tolist() if _dy_blocks.numel() > 136 else []}\n"
+                )
+                _ref_sys.stdout.flush()
+                _dy_off += _sz
         y_ref.backward(dy_ref)
         if _ref_dbg:
+            for _gi, _fc1_out_ref in enumerate(_fc1_out_interleaved_refs):
+                _v = _fc1_out_ref.detach().double()
+                if _v.numel() > 0:
+                    print(
+                        f"[REF_BWD_swiglu_in group={_gi}] shape={list(_v.shape)}"
+                        f"  min={_v.min().item():.4g} max={_v.max().item():.4g}"
+                        f"  norm={_v.norm().item():.4g}"
+                        f"  col0_8={_v[0, :8].tolist()}"
+                        f"  col32_8={_v[0, 32:40].tolist()}"
+                        f"  col256_8={_v[0, 256:264].tolist()}",
+                        flush=True,
+                    )
+                else:
+                    print(f"[REF_BWD_swiglu_in group={_gi}] (empty)", flush=True)
+        if _ref_dbg:
+            _ref_grads = [_fc2_in_ref.grad for _fc2_in_ref in _fc2_in_refs]
+            _valid_ref_grads = [_g for _g in _ref_grads if _g is not None and _g.numel() > 0]
+            if _valid_ref_grads:
+                _ref_fused_grad = torch.cat([_g.detach().float() for _g in _valid_ref_grads], dim=0)
+                print(
+                    f"[REF_FUSED_GRAD_IN]  nan={_ref_fused_grad.isnan().any().item()}"
+                    f" min={_ref_fused_grad.min().item():.4g}"
+                    f" max={_ref_fused_grad.abs().max().item():.4g}"
+                    f" norm={_ref_fused_grad.norm().item():.4g}",
+                    flush=True,
+                )
+                _nvfp4_block = 16  # NVFP4_BLOCK_SCALING_SIZE
+                for _gi, _g in enumerate(_ref_grads):
+                    if _g is None or _g.numel() == 0:
+                        print(f"[REF_FUSED_GRAD_IN amax_block] group={_gi} sz=0 (empty)", flush=True)
+                        continue
+                    _sz = _g.shape[0]
+                    _g_grp = _g.detach().float()
+                    _g_flat = _g_grp.reshape(-1, _nvfp4_block)
+                    _blk_amaxes = _g_flat.abs().amax(dim=1)
+                    _grp_amax = _blk_amaxes.max().item()
+                    print(
+                        f"[REF_FUSED_GRAD_IN amax_block] group={_gi} sz={_sz}"
+                        f"  num_blocks={_blk_amaxes.numel()}"
+                        f"  block_amax_min={_blk_amaxes.min().item():.4f}"
+                        f"  block_amax_max={_blk_amaxes.max().item():.4f}"
+                        f"  global_amax={_grp_amax:.4f}"
+                        f"  first8_block_amaxes={_blk_amaxes[:8].tolist()}",
+                        flush=True,
+                    )
+        if _ref_dbg:
+            for _gi, _fc2_in_ref in enumerate(_fc2_in_refs):
+                _g = _fc2_in_ref.grad
+                if _g is not None and _g.numel() > 0:
+                    _g_f = _g.detach().double()
+                    print(
+                        f"[REF_BWD_pre_swiglu group={_gi}] shape={list(_g_f.shape)}"
+                        f"  min={_g_f.min().item():.4g} max={_g_f.abs().max().item():.4g}"
+                        f"  norm={_g_f.norm().item():.4g}"
+                        f"  row0[:8]={_g_f[0, :8].tolist()}",
+                        flush=True,
+                    )
+                else:
+                    print(f"[REF_BWD_pre_swiglu group={_gi}] (empty or no grad)", flush=True)
+        if _ref_dbg:
+            for _gi, _fc1_out_ref in enumerate(_fc1_out_interleaved_refs):
+                _g = _fc1_out_ref.grad
+                if _g is not None and _g.numel() > 0:
+                    _g_f = _g.detach().double()
+                    print(
+                        f"[REF_FC1_DY group={_gi}] shape={list(_g_f.shape)}"
+                        f"  min={_g_f.min().item():.4g} max={_g_f.max().item():.4g}"
+                        f"  norm={_g_f.norm().item():.4g}"
+                        f"  col0_8={_g_f[0, :8].tolist()}"
+                        f"  col32_8={_g_f[0, 32:40].tolist()}"
+                        f"  col256_8={_g_f[0, 256:264].tolist()}",
+                        flush=True,
+                    )
+                else:
+                    print(f"[REF_FC1_DY group={_gi}] (empty or no grad)", flush=True)
             print(f"[REF_X_GRAD] {_tstats(x_ref.grad, row0=True)}", flush=True)
+            _xgrad_splits = torch.split(x_ref.grad.detach().double(), split_sizes.tolist())
+            for _gi in range(group_size):
+                _xg = _xgrad_splits[_gi]
+                if _xg.numel() > 0:
+                    print(
+                        f"[REF_X_GRAD group={_gi}] shape={list(_xg.shape)}"
+                        f"  min={_xg.min().item():.4g} max={_xg.max().item():.4g}"
+                        f"  norm={_xg.norm().item():.4g}"
+                        f"  row0[:8]={_xg[0, :8].tolist()}",
+                        flush=True,
+                    )
+                else:
+                    print(f"[REF_X_GRAD group={_gi}] shape={list(_xg.shape)}  (empty)", flush=True)
             for _gi in range(group_size):
                 print(f"[REF_FC1_WGRAD group={_gi}] {_tstats(fc1_ws_ref[_gi].grad)}", flush=True)
                 print(f"[REF_FC2_WGRAD group={_gi}] {_tstats(fc2_ws_ref[_gi].grad)}", flush=True)
@@ -3493,17 +3641,34 @@ class TestSequentialModules:
                             f"  with_rht={getattr(_w1_qtor, 'with_rht', 'N/A')}",
                             flush=True,
                         )
-                    getattr(fc1, f"weight{group_idx}").copy_(fc1_ws_test[group_idx])
+                    _old_w1 = getattr(fc1, f"weight{group_idx}")
+                    _q1 = _old_w1._get_quantizer().copy()
+                    _q1.set_usage(rowwise=True, columnwise=True)
+                    _new_w1 = torch.nn.Parameter(_q1(fc1_ws_test[group_idx]))
+                    fc1.register_parameter(f"weight{group_idx}", _new_w1)
                     if _ref_dbg:
                         _w1_after = getattr(fc1, f"weight{group_idx}").dequantize().detach().double()
                         print(f"[COPY_FC1_W_AFTER  group={group_idx}] {_tstats(_w1_after, row0=True)}", flush=True)
                     if _ref_dbg:
                         _w2_before = fc2_ws_test[group_idx].detach().double()
-                        print(f"[COPY_FC2_W_BEFORE group={group_idx}] {_tstats(_w2_before, row0=True)}", flush=True)
-                    getattr(fc2, f"weight{group_idx}").copy_(fc2_ws_test[group_idx])
+                        _w2_src_amax_col = getattr(fc2_ws_test[group_idx], "_amax_columnwise", "N/A")
+                        _w2_src_amax_row = getattr(fc2_ws_test[group_idx], "_amax_rowwise", "N/A")
+                        print(f"[COPY_FC2_W_BEFORE group={group_idx}] {_tstats(_w2_before, row0=True)}"
+                              f"  src_amax_col={_w2_src_amax_col}"
+                              f"  src_amax_row={_w2_src_amax_row}", flush=True)
+                    _old_w2 = getattr(fc2, f"weight{group_idx}")
+                    _q2 = _old_w2._get_quantizer().copy()
+                    _q2.set_usage(rowwise=True, columnwise=True)
+                    _new_w2 = torch.nn.Parameter(_q2(fc2_ws_test[group_idx]))
+                    fc2.register_parameter(f"weight{group_idx}", _new_w2)
                     if _ref_dbg:
-                        _w2_after = getattr(fc2, f"weight{group_idx}").dequantize().detach().double()
-                        print(f"[COPY_FC2_W_AFTER  group={group_idx}] {_tstats(_w2_after, row0=True)}", flush=True)
+                        _w2p = getattr(fc2, f"weight{group_idx}")
+                        _w2_after = _w2p.dequantize().detach().double()
+                        _w2_dst_amax_col = getattr(_w2p, "_amax_columnwise", "N/A")
+                        _w2_dst_amax_row = getattr(_w2p, "_amax_rowwise", "N/A")
+                        print(f"[COPY_FC2_W_AFTER  group={group_idx}] {_tstats(_w2_after, row0=True)}"
+                              f"  dst_amax_col={_w2_dst_amax_col}"
+                              f"  dst_amax_row={_w2_dst_amax_row}", flush=True)
                 if bias:
                     getattr(fc1, f"bias{group_idx}").copy_(fc1_bs_test[group_idx])
                     getattr(fc2, f"bias{group_idx}").copy_(fc2_bs_test[group_idx])
@@ -3609,19 +3774,68 @@ class TestSequentialModules:
             tols = {"rtol": 0.25, "atol": 0.5}
 
         # Check values
+        def _diff_stats(t, r):
+            t = t.detach().cpu().double() if hasattr(t, "detach") else t.cpu().double()
+            r = r.detach().cpu().double() if hasattr(r, "detach") else r.cpu().double()
+            if t.numel() == 0 or r.numel() == 0:
+                return "(empty)"
+            abs_diff = (t - r).abs()
+            rel_diff = abs_diff / (r.abs() + 1e-8)
+            return (f"max_abs={abs_diff.max().item():.4g}"
+                    f"  max_rel={rel_diff.max().item():.4g}"
+                    f"  atol={tols['atol']} rtol={tols['rtol']}")
+
+        # Print reference debug info for comparison with BWD_UNFUSED_* prints
+        if _fc1_out_interleaved_refs and _fc1_out_interleaved_refs[0].grad is not None:
+            _ref_g0 = _fc1_out_interleaved_refs[0].grad.detach().float()
+            _ref_si = _fc1_out_interleaved_refs[0].detach().float()
+            _half_ref = _ref_si.shape[1] // 2
+            print(f"[REF_FC1_DY_row0]  first8={_ref_g0[0, :8].tolist()}", flush=True)
+            print(f"[REF_swiglu_in_row0]  first8={_ref_si[0, :8].tolist()}  half8={_ref_si[0, _half_ref:_half_ref+8].tolist()}", flush=True)
+        if _fc2_in_refs and _fc2_in_refs[0].grad is not None:
+            _ref_d_fc2in = _fc2_in_refs[0].grad.detach().float()
+            print(f"[REF_d_fc2_in_row0]  first8={_ref_d_fc2in[0, :8].tolist()}", flush=True)
+        print(f"[REF_x_grad_row0]  first8={x_ref.grad.detach().float()[0, :8].tolist()}", flush=True)
+        if x_test.grad is not None:
+            print(f"[TEST_x_grad_row0]  first8={x_test.grad.detach().float()[0, :8].tolist()}", flush=True)
+
+        print(f"[CHECK y (forward)] {_diff_stats(y_test, y_ref)}", flush=True)
         assert_close(y_test, y_ref, **tols)
+        print(f"[CHECK y (forward)] PASSED", flush=True)
+
+        print(f"[CHECK x.grad] {_diff_stats(x_test.grad, x_ref.grad)}", flush=True)
+        if x_test.grad is not None and x_ref.grad is not None:
+            _xg_t = x_test.grad.detach().float().cpu()
+            _xg_r = x_ref.grad.detach().float().cpu()
+            for _dbg_idx in [(1094, 48), (1453, 3)]:
+                _ri, _ci = _dbg_idx
+                if _ri < _xg_t.shape[0] and _ci < _xg_t.shape[1]:
+                    _tv, _rv = _xg_t[_ri, _ci].item(), _xg_r[_ri, _ci].item()
+                    print(f"[XGRAD_SPOT {_ri},{_ci}] test={_tv:.6g} ref={_rv:.6g} ratio={(_tv/_rv if abs(_rv)>1e-9 else float('nan')):.4g}", flush=True)
+            _abs_diff = (_xg_t - _xg_r).abs()
+            _worst_flat = _abs_diff.argmax().item()
+            _worst_r, _worst_c = divmod(_worst_flat, _xg_t.shape[1])
+            _wt, _wr = _xg_t[_worst_r, _worst_c].item(), _xg_r[_worst_r, _worst_c].item()
+            print(f"[XGRAD_WORST_ABS ({_worst_r},{_worst_c})] test={_wt:.6g} ref={_wr:.6g} ratio={(_wt/_wr if abs(_wr)>1e-9 else float('nan')):.4g}", flush=True)
         assert_close_grads(x_test, x_ref, **tols)
+        print(f"[CHECK x.grad] PASSED", flush=True)
+
+        print(f"[CHECK probs.grad] {_diff_stats(probs_test.grad if probs_test.grad is not None else torch.zeros(1), probs_ref.grad if probs_ref.grad is not None else torch.zeros(1))}", flush=True)
         assert_close_grads(probs_test, probs_ref, **tols)
+        print(f"[CHECK probs.grad] PASSED", flush=True)
+
         for group_idx in range(group_size):
             assert_close_grads(getattr(fc2, f"bias{group_idx}"), fc2_bs_ref[group_idx], **tols)
             assert_close_grads(getattr(fc1, f"bias{group_idx}"), fc1_bs_ref[group_idx], **tols)
             if not single_grouped_parameter and not accumulate_into_main_grad:
-                assert_close_grads(
-                    getattr(fc2, f"weight{group_idx}"), fc2_ws_ref[group_idx], **tols
-                )
-                assert_close_grads(
-                    getattr(fc1, f"weight{group_idx}"), fc1_ws_ref[group_idx], **tols
-                )
+                w2_test = getattr(fc2, f"weight{group_idx}")
+                w1_test = getattr(fc1, f"weight{group_idx}")
+                print(f"[CHECK fc2.weight{group_idx}.grad] {_diff_stats(w2_test.grad, fc2_ws_ref[group_idx].grad)}", flush=True)
+                assert_close_grads(w2_test, fc2_ws_ref[group_idx], **tols)
+                print(f"[CHECK fc2.weight{group_idx}.grad] PASSED", flush=True)
+                print(f"[CHECK fc1.weight{group_idx}.grad] {_diff_stats(w1_test.grad, fc1_ws_ref[group_idx].grad)}", flush=True)
+                assert_close_grads(w1_test, fc1_ws_ref[group_idx], **tols)
+                print(f"[CHECK fc1.weight{group_idx}.grad] PASSED", flush=True)
         fc1_w_ref_grad = torch.stack([w.grad for w in fc1_ws_ref], dim=0)
         fc2_w_ref_grad = torch.stack([w.grad for w in fc2_ws_ref], dim=0)
         if accumulate_into_main_grad:

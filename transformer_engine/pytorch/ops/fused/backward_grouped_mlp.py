@@ -183,6 +183,18 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         # Saved tensors from scaled SwiGLU forward
         swiglu_in, scales = swiglu_ctx.saved_tensors
 
+        import sys as _sys2, os as _os2
+        if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            _si = swiglu_in.detach().float()
+            _si_offset = 0
+            # split_sizes not loaded yet — will be loaded below from fc1_ctx
+            # so defer this print; just print global stats for now
+            _sys2.__stdout__.write(
+                f"[BWD_swiglu_in_saved]  shape={list(_si.shape)}"
+                f"  nan={_si.isnan().any().item()} min={_si.min().item():.4g}"
+                f"  max={_si.abs().max().item():.4g} norm={_si.norm().item():.4g}\n"
+            ); _sys2.__stdout__.flush()
+
         # Saved tensors from FC2 forward
         saved_tensors = fc2_ctx.saved_tensors
         _, saved_tensors = saved_tensors[0], saved_tensors[1:]  # Assume same split sizes as FC1
@@ -226,6 +238,21 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             raise ValueError(f"Expected {num_groups} splits, but got {int(split_sizes.numel())}.")
         split_sizes = split_sizes.to(dtype=torch.int64, device=device)
         split_points = split_points.to(dtype=torch.int, device=device)
+
+        if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            _si2 = swiglu_in.detach().float()
+            _si2_off = 0
+            for _gi_si, _sz_si in enumerate(split_sizes.tolist()):
+                if _sz_si > 0:
+                    _grp_si = _si2[_si2_off:_si2_off + _sz_si]
+                    _sys2.__stdout__.write(
+                        f"[BWD_swiglu_in group={_gi_si} sz={_sz_si}]"
+                        f" row0[:8]={_grp_si[0, :8].tolist()}"
+                        f" norm={_grp_si.norm().item():.4g}"
+                        f" min={_grp_si.min().item():.4g} max={_grp_si.abs().max().item():.4g}\n"
+                    )
+                _si2_off += _sz_si
+            _sys2.__stdout__.flush()
 
         grouped_fc1_x = None
         if fc1_ctx.weight_requires_grad:
@@ -279,6 +306,10 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         if not torch.cuda.is_current_stream_capturing():
             _sys2.stderr.write(f"[BWD use_nvfp4={use_nvfp4}] grad_out_q type={type(fc2_ctx.grad_output_quantizers[0]).__name__}  fc2_w type={type(_fc2_w).__name__}  single_grouped={fc2_op.single_grouped_parameter}\n"); _sys2.stderr.flush()
         if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            _sys2.__stdout__.write(
+                f"[BWD_FUSED_GRAD_IN types] grad_output type={type(grad_output).__name__} dtype={grad_output.dtype}"
+                f"  fc2_dy type={type(fc2_dy).__name__} dtype={fc2_dy.dtype}\n"
+            ); _sys2.__stdout__.flush()
             _g = fc2_dy.detach().float()
             _sys2.__stdout__.write(
                 f"[BWD_FUSED_GRAD_IN]  nan={_g.isnan().any().item()} min={_g.min().item():.4g} max={_g.abs().max().item():.4g} norm={_g.norm().item():.4g}\n"
@@ -316,6 +347,21 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         grouped_fc2_dy = tex.group_quantize(
             fc2_dy, fc2_ctx.grad_output_quantizers[0], num_groups, split_sizes
         )
+        if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            import sys as _bwd_sys
+            _dy_f = fc2_dy.detach().float()
+            _dy_off = 0
+            for _gi_dy, _sz_dy in enumerate(split_sizes.tolist()):
+                if _sz_dy > 0:
+                    _dy_g = _dy_f[_dy_off:_dy_off + _sz_dy]
+                    _bwd_sys.stdout.write(
+                        f"[BWD_FC2_DY group={_gi_dy} sz={_sz_dy}]"
+                        f"  row0_col0_8={_dy_g[0, :8].tolist()}"
+                        f"  row0_col32_40={_dy_g[0, 32:40].tolist()}"
+                        f"  row0_col128_136={_dy_g[0, 128:136].tolist()}\n"
+                    )
+                _dy_off += _sz_dy
+            _bwd_sys.stdout.flush()
         if use_nvfp4 and int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
             _qscale = grouped_fc2_dy.scale_inv.view(dtype=torch.float8_e4m3fn).float()
             _qamax = getattr(grouped_fc2_dy, 'amax', None)
@@ -373,6 +419,10 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             if _amax_fc2_dy is None:
                 _amax_fc2_dy = getattr(grouped_fc2_dy, '_amax_rowwise')
             _amax_fc2_dy = _amax_fc2_dy.float().view(-1)
+            if _amax_fc2_dy.numel() != num_groups:
+                # Single global amax (or unexpected size): reduce to scalar so it broadcasts
+                # correctly against per-group weight amaxes in the alpha computation below.
+                _amax_fc2_dy = _amax_fc2_dy.amax().view(1)
             if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
                 _raw_dy_si = fc2_dy_scales.view(-1)[:4].tolist()
                 _amax_fc2_dy0 = _amax_fc2_dy.view(-1)[0].item()
@@ -385,9 +435,26 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                 _sys2.__stdout__.flush()
             # scale_inv already encodes block_max * fp8_max / global_amax — pass as-is.
             # The global_decode_scale (amax / (fp8_max * fp4_max)) is folded into alpha below.
+        if use_nvfp4 and int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            import sys as _bwd_sc_sys
+            # Print per-group fc2_dy scales (flat, before reshape) for comparison
+            _sc_flat = fc2_dy_scales.view(dtype=torch.float8_e4m3fn).float().view(-1)
+            # Per group: (M_g/128) * (data_k/k_sf_divisor) * 32 * 4 * 4 scale values
+            _scales_per_group = [(s // 128) * (data_k // k_sf_divisor) * 32 * 4 * 4 for s in split_sizes.tolist()]
+            _sc_off = 0
+            for _gi_sc, _n_sc in enumerate(_scales_per_group):
+                _grp_sc = _sc_flat[_sc_off:_sc_off + _n_sc]
+                _bwd_sc_sys.stdout.write(
+                    f"[BWD_FC2_DY_SCALES group={_gi_sc} n_scales={_n_sc}]"
+                    f"  first8={_grp_sc[:8].tolist()}"
+                    f"  sc32_40={_grp_sc[32:40].tolist() if _n_sc > 40 else []}"
+                    f"  sc128_136={_grp_sc[128:136].tolist() if _n_sc > 136 else []}\n"
+                )
+                _sc_off += _n_sc
+            _bwd_sc_sys.stdout.flush()
         if use_nvfp4 and getattr(grouped_fc2_dy, 'with_gemm_swizzled_scales', False):
             # RHT kernel with optimize_for_gemm=True writes scales directly in
-            # SwizzledSFALayout (cuDNN-compatible format). Permute to cuDNN format.
+            # SwizzledSFALayout (cuDNN-compatible format). Only kernel-format permute needed.
             fc2_dy_scales = fc2_dy_scales.view(
                 1,
                 out_shape[0] // 128,
@@ -398,20 +465,41 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             )
             fc2_dy_scales = fc2_dy_scales.permute(3, 4, 1, 5, 2, 0)
         else:
-            # Unswizzled TE format: permute to cuDNN format
+            # Unswizzled TE format: convert unswizzled → swizzled, then to kernel format.
             fc2_dy_scales = fc2_dy_scales.view(
                 1,
                 out_shape[0] // 128,
-                data_k // k_sf_divisor,
-                32,
                 4,
+                32,
+                data_k // k_sf_divisor,
                 4,
             )
+            fc2_dy_scales = fc2_dy_scales.permute(0, 1, 4, 3, 2, 5).contiguous()
             fc2_dy_scales = fc2_dy_scales.permute(3, 4, 1, 5, 2, 0)
 
         # Pack weight tensors
         # Note: Fused kernel expects tensor with non-contiguous
         # logical dims.
+        # Regenerate columnwise data/scales from rowwise (always, to stay capture-safe).
+        # _columnwise_data/_columnwise_scale_inv/_amax_columnwise may be stale when
+        # the weight's rowwise quantization was updated but columnwise was not synced.
+        if use_nvfp4 and not fc2_op.single_grouped_parameter:
+            for _rw in grouped_fc2_weight:
+                _rar = getattr(_rw, "_amax_rowwise", None)
+                _rac = getattr(_rw, "_amax_columnwise", None)
+                if _rar is not None and _rac is not None:
+                    _rrd = _rw._rowwise_data
+                    if not _rrd.is_contiguous():
+                        _rrd = _rrd.contiguous()
+                    tex.nvfp4_data_transpose(_rrd, out=_rw._columnwise_data)
+                    _rM, _rK = _rw.size()[0], _rw.size()[-1]
+                    _rT = 16
+                    tex.nvfp4_2d_scale_transpose(
+                        _rw._rowwise_scale_inv, _rw._columnwise_scale_inv,
+                        (_rM + _rT - 1) // _rT, (_rK + _rT - 1) // _rT,
+                    )
+                    _rac.copy_(_rar)
+
         # Data actual shape: (num_groups, k, n)
         # Scale actual shape: (num_groups, n/128, k/128, 32 (block col),
         #  4 (block col), 4 (block row))
@@ -435,6 +523,21 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         else:
             fc2_w_data = fc2_w_data.view(num_groups, fc2_weight_shape[0], weight_k)
             fc2_w_data = fc2_w_data.permute(2, 1, 0)
+        if use_nvfp4 and not fc2_op.single_grouped_parameter and int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            import sys as _bwd_wsi_sys
+            for _gi_wsi, _w_wsi in enumerate(grouped_fc2_weight):
+                _sc = _w_wsi._columnwise_scale_inv
+                _sc_f = _sc.view(torch.float8_e4m3fn).float().reshape(-1)
+                _wdq = _w_wsi.dequantize(dtype=torch.float32)
+                _bwd_wsi_sys.__stdout__.write(
+                    f"[BWD_FC2_W_SCALE_INV_RAW group={_gi_wsi}]"
+                    f"  _amax_col={getattr(_w_wsi, '_amax_columnwise', None)}"
+                    f"  _amax_row={getattr(_w_wsi, '_amax_rowwise', None)}"
+                    f"  col_si_mean={_sc_f.mean().item():.3g}"
+                    f"  rowwise_dq_norm={_wdq.norm().item():.4g}"
+                    f"  rowwise_dq_max={_wdq.abs().max().item():.4g}\n"
+                )
+                _bwd_wsi_sys.__stdout__.flush()
         fc2_w_scales = (
             grouped_fc2_weight.columnwise_scale_inv
             if fc2_op.single_grouped_parameter
@@ -449,16 +552,10 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                                    if grouped_fc2_weight.columnwise_amax is not None
                                    else getattr(grouped_fc2_weight, '_amax_columnwise')).float()
             else:
-                # Per-group weights: gather each group's columnwise amax into a vector
+                # Per-group: gather each group's columnwise amax (already synced above).
                 _col_amaxes = []
-                import sys as _dbg_sys
                 for _gi2, _w in enumerate(grouped_fc2_weight):
                     _a = getattr(_w, '_amax_columnwise', None)
-                    if not torch.cuda.is_current_stream_capturing():
-                        _dbg_sys.stderr.write(
-                            f"[BWD_fc2_w_col_amax] group={_gi2} _amax_columnwise="
-                            f"{'None' if _a is None else _a.float().view(-1).tolist()}\n"
-                        ); _dbg_sys.stderr.flush()
                     if _a is None:
                         _a = torch.zeros(1, dtype=torch.float32, device=fc2_w_scales.device)
                     _col_amaxes.append(_a.float().view(-1)[0])
@@ -475,32 +572,65 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                     f"  scales_after_convert[block0]={_scale0 * _amax_fc2_w_col0 / (_nvfp4_fp8_max * _nvfp4_fp4_max):.6f}\n"
                 )
                 _sys2.__stdout__.flush()
+            # Per-group dequantized weight (columnwise = W^T) for column comparison
+            if use_nvfp4 and int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+                import sys as _bwd_w_sys
+                _weights_to_print = (
+                    grouped_fc2_weight.split_into_quantized_tensors()
+                    if fc2_op.single_grouped_parameter
+                    else grouped_fc2_weight
+                )
+                for _gi_w, _w in enumerate(_weights_to_print):
+                    _wdq = _w.dequantize(dtype=torch.float32).view(fc2_weight_shape)  # (out_features, in_features)
+                    _bwd_w_sys.stdout.write(
+                        f"[BWD_FC2_W group={_gi_w}] shape={list(_wdq.shape)}"
+                        f"  row0_col0_8={_wdq[0, :8].tolist()}"
+                        f"  row0_col32_40={_wdq[0, 32:40].tolist()}"
+                        f"  row0_col128_136={_wdq[0, 128:136].tolist()}\n"
+                    )
+                _bwd_w_sys.stdout.flush()
             # scale_inv already encodes block_max * fp8_max / global_amax — pass as-is.
             # The global_decode_scale is folded into alpha below.
         if use_nvfp4:
-            # For NVFP4 columnwise: n=in_features=28672, k_packed=out_features/2=4096
+            # For NVFP4 columnwise: n=in_features, k_packed=out_features/2
+            # _columnwise_scale_inv is stored as (outer=in_features, inner=out_features/16)
+            # Unswizzled 6D layout must match the rowwise pattern: (G, outer/128, 4, 32, inner/4, 4)
             weight_k_col = fc2_weight_shape[0] // 2  # packed k = out_features/2
             fc2_w_scales = fc2_w_scales.view(
                 num_groups,
-                fc2_weight_shape[1] // 128,  # n dim = in_features/128 = 224
-                4,
-                weight_k_col // k_sf_divisor,  # k scale dim = 4096/32 = 128
+                fc2_weight_shape[1] // 128,  # n dim = in_features/128
                 4,
                 32,
-            )  # Unswizzled layout
+                weight_k_col // k_sf_divisor,  # k scale dim = out_features/64
+                4,
+            )  # Unswizzled layout (matches rowwise scale tensor layout)
         else:
             fc2_w_scales = fc2_w_scales.view(
                 num_groups,
                 fc2_weight_shape[0] // 128,
                 4,
+                32,
                 weight_k // k_sf_divisor,
                 4,
-                32,
             )  # Unswizzled layout
+        if use_nvfp4 and int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+            import sys as _bwd_ws_sys
+            # fc2_w_scales is in unswizzled layout: (num_groups, n/128, 4, 32, k_col/sf, 4)
+            # Print first 8 scale values per group (group dim is outermost)
+            _wsc_f = fc2_w_scales.float()
+            for _gi_ws in range(num_groups):
+                _grp_wsc = _wsc_f[_gi_ws].reshape(-1)
+                _bwd_ws_sys.stdout.write(
+                    f"[BWD_FC2_W_SCALES group={_gi_ws} n_scales={_grp_wsc.numel()}]"
+                    f"  first8={_grp_wsc[:8].tolist()}"
+                    f"  sc32_40={_grp_wsc[32:40].tolist()}"
+                    f"  sc128_136={_grp_wsc[128:136].tolist() if _grp_wsc.numel() > 136 else []}\n"
+                )
+            _bwd_ws_sys.stdout.flush()
         fc2_w_scales = fc2_w_scales.permute(
-            0, 3, 1, 5, 4, 2
+            0, 1, 4, 3, 2, 5
         ).contiguous()  # Convert to swizzled layout
-        fc2_w_scales = fc2_w_scales.permute(3, 4, 2, 5, 1, 0)
+        fc2_w_scales = fc2_w_scales.permute(3, 4, 1, 5, 2, 0)
 
         # Kernel scaling factors
         if use_nvfp4:
@@ -540,6 +670,19 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                 f"[BWD_FUSED_swiglu_in]  nan={_si.isnan().any().item()} min={_si.min().item():.4g} max={_si.abs().max().item():.4g} norm={_si.norm().item():.4g}\n"
                 f"  alpha_tensor={alpha_tensor.tolist()}\n"
             )
+            _offset_si = 0
+            for _gi_si, _sz_si in enumerate(split_sizes.tolist()):
+                if _sz_si > 0:
+                    _grp_si = _si[_offset_si:_offset_si + _sz_si]
+                    _sys2.__stdout__.write(
+                        f"[BWD swiglu_in group={_gi_si} sz={_sz_si}]"
+                        f" row0[:8]={_grp_si[0, :8].tolist()}"
+                        f" norm={_grp_si.norm().item():.4g}"
+                        f" min={_grp_si.min().item():.4g} max={_grp_si.max().item():.4g}\n"
+                    )
+                else:
+                    _sys2.__stdout__.write(f"[BWD swiglu_in group={_gi_si} sz=0 (empty)]\n")
+                _offset_si += _sz_si
             _sys2.__stdout__.flush()
 
         if _unfused_rank0 and use_nvfp4 and not torch.cuda.is_current_stream_capturing():
@@ -588,50 +731,143 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                 # Step 2: FC2 dgrad in float32: dX = dY @ W   (tokens,8192)@(8192,28672)
                 _unfused_intermediate = (fc2_dy.float() @ _fc2_w_f32).to(dtype=dtype)
             else:
-                # Step 1: FC2 dgrad GEMM via general_grouped_gemm (layout "NN": C = W @ dy^T)
+                # Step 1: FC2 dgrad — dequantize weights to bfloat16, per-group matmul with raw fc2_dy.
+                # This avoids NVFP4 quantization noise in the GEMM while still exercising the
+                # dSwiGLU unfused path.
+                if fc2_op.single_grouped_parameter:
+                    _w_parts_bf16 = grouped_fc2_weight.split_into_quantized_tensors()
+                    _fc2_w_parts = [w.dequantize(dtype=dtype).view(fc2_weight_shape) for w in _w_parts_bf16]
+                else:
+                    _fc2_w_parts = [w.dequantize(dtype=dtype).view(fc2_weight_shape) for w in grouped_fc2_weight]
                 _unfused_intermediate = torch.zeros(
                     out_shape[0], fc2_weight_shape[1], dtype=dtype, device=device
                 )
-                _grouped_unfused_intermediate = make_grouped_tensor_from_buffers(
-                    num_groups=num_groups,
-                    data=_unfused_intermediate,
-                    split_sizes=split_sizes,
-                    dtype=dtype,
-                    logical_last_dim=fc2_weight_shape[1],
-                )
-                general_grouped_gemm_for_grouped_tensor(
-                    grouped_fc2_weight,
-                    grouped_fc2_dy,
-                    _grouped_unfused_intermediate,
-                    layout="NN",
-                    accumulate=False,
-                )
+                _off = 0
+                for _gi_uf, (_sz_uf, _w_uf) in enumerate(zip(split_sizes.tolist(), _fc2_w_parts)):
+                    if _sz_uf > 0:
+                        _dy_g = fc2_dy[_off:_off + _sz_uf]  # (sz, out_features) bfloat16
+                        _unfused_intermediate[_off:_off + _sz_uf] = (_dy_g.float() @ _w_uf.float()).to(dtype)
+                    _off += _sz_uf
             if _unfused_rank0 and not torch.cuda.is_current_stream_capturing():
                 _ui = _unfused_intermediate.float()
                 _sys2.__stdout__.write(
                     f"[BWD_UNFUSED_gemm_out]  nan={_ui.isnan().any().item()} min={_ui.min().item():.4g} max={_ui.abs().max().item():.4g} norm={_ui.norm().item():.4g}\n"
                 )
+                _offset_ui = 0
+                for _gi_ui, _sz_ui in enumerate(split_sizes.tolist()):
+                    if _sz_ui > 0:
+                        _grp_ui = _ui[_offset_ui : _offset_ui + _sz_ui]
+                        _sys2.__stdout__.write(
+                            f"[BWD_PRE_SWIGLU group={_gi_ui} sz={_sz_ui}]"
+                            f" row0[:8]={_grp_ui[0, :8].tolist()}"
+                            f" norm={_grp_ui.norm().item():.4g}"
+                            f" min={_grp_ui.min().item():.4g} max={_grp_ui.max().item():.4g}\n"
+                        )
+                    else:
+                        _sys2.__stdout__.write(f"[BWD_PRE_SWIGLU group={_gi_ui} sz=0 (empty)]\n")
+                    _offset_ui += _sz_ui
                 _sys2.__stdout__.flush()
             # Step 2: manual dSwiGLU backward
-            _si_f = swiglu_in.float()  # (sum_m, fc1_weight_shape[0])
+            # swiglu_in layout (after reference interleave reshape(M,H//32,2,32).T(1,2).reshape(M,2H)):
+            #   first half  = all gate elements (permuted within blocks of 32)
+            #   second half = all linear elements (same permutation)
+            # So midpoint split correctly separates gate and linear; no extra deinterleave needed.
+            # The output [d_gate | d_linear] is in the same interleaved format as swiglu_in,
+            # which is also the format expected by the FC1 backward GEMM (interleaved weight rows).
+            _si_f = swiglu_in.float()  # (sum_m, fc1_weight_shape[0]) — INTERLEAVED format
             _half = fc2_weight_shape[1]
-            _x = _si_f[:, :_half]           # linear half
-            _g = _si_f[:, _half:]           # gate half
+            # swiglu_in is in interleaved format: [G0..31, L0..31, G32..63, L32..63, ...]
+            # Deinterleave to standard format: [G_all | L_all]
+            # Same transform reference applies: reshape(-1, H//32, 2, 32).transpose(1,2).reshape(-1, 2H)
+            _si_f_std = _si_f.reshape(-1, _half // 32, 2, 32).transpose(1, 2).reshape(-1, 2 * _half).contiguous()
+            if _unfused_rank0 and not torch.cuda.is_current_stream_capturing():
+                _off_si = 0
+                for _gi_si, _sz_si in enumerate(split_sizes.tolist()):
+                    if _sz_si > 0:
+                        _grp_si = _si_f_std[_off_si:_off_si + _sz_si]
+                        _sys2.__stdout__.write(
+                            f"[BWD_SWIGLU_IN group={_gi_si} sz={_sz_si}]"
+                            f" col0_8={_grp_si[0, :8].tolist()}"
+                            f" col32_8={_grp_si[0, 32:40].tolist()}"
+                            f" col256_8={_grp_si[0, _half:_half+8].tolist()}"
+                            f" norm={_grp_si.norm().item():.4g}\n"
+                        )
+                    _off_si += _sz_si
+                _sys2.__stdout__.flush()
+            _g = _si_f_std[:, :_half]       # gate (all), standard format
+            _x = _si_f_std[:, _half:]       # linear (all), standard format
             _sig_g = torch.sigmoid(_g)
-            _silu_g = _g * _sig_g
-            _d_out = _unfused_intermediate.float()
-            _d_x = _d_out * _silu_g
-            _d_g = _d_out * _x * _sig_g * (1.0 + _g * (1.0 - _sig_g))
-            _dswiglu = torch.cat([_d_x, _d_g], dim=-1)
+            _silu_g = _g * _sig_g           # silu(gate)
+            # d_out must be scaled by per-token router probability before dSwiGLU
+            # Forward: fc2_in = silu(gate)*linear * scales[token]
+            # Backward: d_fc1_out = dswiglu(d_fc2_in * scales[token], fc1_out)
+            _scales_f = scales.detach().float().view(-1, 1)  # (M_total, 1)
+            _d_out = _unfused_intermediate.float() * _scales_f
+            _d_g = _d_out * _x * _sig_g * (1.0 + _g * (1.0 - _sig_g))  # d/d(gate), first half
+            _d_x = _d_out * _silu_g                                       # d/d(linear), second half
+            _dswiglu = torch.cat([_d_g, _d_x], dim=-1)  # gate grad first, linear grad second
             if _unfused_rank0 and not torch.cuda.is_current_stream_capturing():
                 _sys2.__stdout__.write(
                     f"[BWD_UNFUSED_dswiglu]  nan={_dswiglu.isnan().any().item()} min={_dswiglu.min().item():.4g} max={_dswiglu.abs().max().item():.4g} norm={_dswiglu.norm().item():.4g}\n"
                 )
+                _off_ds = 0
+                for _gi_ds, _sz_ds in enumerate(split_sizes.tolist()):
+                    if _sz_ds > 0:
+                        _grp_ds = _dswiglu[_off_ds:_off_ds + _sz_ds]
+                        _sys2.__stdout__.write(
+                            f"[BWD_UNFUSED_dswiglu group={_gi_ds} sz={_sz_ds}]"
+                            f" col0_8={_grp_ds[0, :8].tolist()}"
+                            f" col32_8={_grp_ds[0, 32:40].tolist()}"
+                            f" col256_8={_grp_ds[0, _half:_half+8].tolist()}"
+                            f" norm={_grp_ds.norm().item():.4g}"
+                            f" min={_grp_ds.min().item():.4g} max={_grp_ds.max().item():.4g}\n"
+                        )
+                    else:
+                        _sys2.__stdout__.write(f"[BWD_UNFUSED_dswiglu group={_gi_ds} sz=0 (empty)]\n")
+                    _off_ds += _sz_ds
+                _sys2.__stdout__.flush()
+            # Reorder columns from standard [d_gate_0..H-1 | d_linear_0..H-1] to
+            # interleaved [d_gate_0..31, d_linear_0..31, d_gate_32..63, ...] to match
+            # the physical weight row ordering (glu_interleave_size=32).
+            _dswiglu = _dswiglu.reshape(-1, 2, _half // 32, 32).transpose(1, 2).reshape(-1, 2 * _half).contiguous()
+            if _unfused_rank0 and not torch.cuda.is_current_stream_capturing():
+                _off_di = 0
+                for _gi_di, _sz_di in enumerate(split_sizes.tolist()):
+                    if _sz_di > 0:
+                        _grp_di = _dswiglu[_off_di:_off_di + _sz_di]
+                        _sys2.__stdout__.write(
+                            f"[BWD_DSWIGLU_INTERLEAVED group={_gi_di} sz={_sz_di}]"
+                            f" row0[:8]={_grp_di[0, :8].tolist()}"
+                            f" norm={_grp_di.norm().item():.4g}"
+                            f" min={_grp_di.min().item():.4g} max={_grp_di.abs().max().item():.4g}\n"
+                        )
+                    _off_di += _sz_di
                 _sys2.__stdout__.flush()
             fc1_dy_row_data = _dswiglu.to(dtype=dtype)
-            grad_scales = torch.zeros(num_groups, dtype=dtype, device=device)
+            grad_scales = torch.zeros(scales.numel(), dtype=dtype, device=device)
 
         else:
+            # Debug pre-dSwiGLU: dequantize fc2 weight + float32 matmul per group
+            if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+                if fc2_op.single_grouped_parameter:
+                    _dbg_ws = [w.dequantize(dtype=torch.float32).view(fc2_weight_shape)
+                               for w in grouped_fc2_weight.split_into_quantized_tensors()]
+                else:
+                    _dbg_ws = [w.dequantize(dtype=torch.float32).view(fc2_weight_shape)
+                               for w in grouped_fc2_weight]
+                _dbg_off = 0
+                for _gi_ps, (_sz_ps, _wg) in enumerate(zip(split_sizes.tolist(), _dbg_ws)):
+                    _dy_g = fc2_dy[_dbg_off : _dbg_off + _sz_ps].float()
+                    _pre = _dy_g @ _wg  # (sz, in_features)
+                    _sys2.__stdout__.write(
+                        f"[BWD_pre_swiglu group={_gi_ps} sz={_sz_ps}]"
+                        f" row0[:8]={_pre[0, :8].tolist()}"
+                        f" norm={_pre.norm().item():.4g}"
+                        f" min={_pre.min().item():.4g} max={_pre.max().item():.4g}\n"
+                    )
+                    _dbg_off += _sz_ps
+                _sys2.__stdout__.flush()
+
             # Fused kernel for FC2 dgrad + dSwiGLU + grad scale
             fc2_dgrad_kernel_out = self.grouped_gemm_dswiglu_kernel()(
                 fc2_dy_data,
@@ -659,6 +895,25 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                 _sys2.__stdout__.flush()
             fc1_dy_row_data = fc1_dy_row_data.permute(2, 0, 1)
             fc1_dy_row_data = fc1_dy_row_data.view(out_shape[0], fc1_weight_shape[0]).contiguous()
+            if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+                _sys2.__stdout__.write(
+                    f"[BWD_fc1_dy_debug] split_sizes={split_sizes.tolist()}"
+                    f"  out_shape={out_shape}  fc1_weight_shape={fc1_weight_shape}"
+                    f"  fc1_dy_row_data.shape={list(fc1_dy_row_data.shape)}\n"
+                ); _sys2.__stdout__.flush()
+                _offset_dy = 0
+                for _gi_dy, _sz_dy in enumerate(split_sizes.tolist()):
+                    if _sz_dy > 0:
+                        _grp_dy = fc1_dy_row_data[_offset_dy:_offset_dy + _sz_dy].float()
+                        _sys2.__stdout__.write(
+                            f"[BWD fc1_dy group={_gi_dy} sz={_sz_dy}]"
+                            f" row0[:8]={_grp_dy[0, :8].tolist()}"
+                            f" norm={_grp_dy.norm().item():.4g} min={_grp_dy.min().item():.4g} max={_grp_dy.max().item():.4g}\n"
+                        )
+                    else:
+                        _sys2.__stdout__.write(f"[BWD fc1_dy group={_gi_dy} sz=0 (empty)]\n")
+                    _offset_dy += _sz_dy
+                _sys2.__stdout__.flush()
             grad_scales = fc2_dgrad_kernel_out["dprob_tensor"]
             grad_scales = grad_scales.view(-1).to(dtype=dtype)
         if int(_os2.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
@@ -874,6 +1129,29 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                     and grouped_fc1_dy.with_gemm_swizzled_scales is not True
                 ):
                     grouped_fc1_dy.with_gemm_swizzled_scales = True
+                # Sync _amax_columnwise from _amax_rowwise before the NN dgrad GEMM.
+                # The packing above creates a fresh contiguous buffer for _amax_columnwise,
+                # copying possibly-corrupted values. Since weights use
+                # random_hadamard_transform=False, both amaxes should be equal; copy the
+                # stable _amax_rowwise to fix any corruption.
+                if use_nvfp4 and isinstance(grouped_fc1_weight, list):
+                    for _w in grouped_fc1_weight:
+                        _ar = getattr(_w, "_amax_rowwise", None)
+                        _ac = getattr(_w, "_amax_columnwise", None)
+                        if _ar is not None and _ac is not None:
+                            _rwd_fc1 = _w._rowwise_data
+                            if not _rwd_fc1.is_contiguous():
+                                _rwd_fc1 = _rwd_fc1.contiguous()
+                            tex.nvfp4_data_transpose(_rwd_fc1, out=_w._columnwise_data)
+                            _M1, _K1 = _w.size()[0], _w.size()[-1]
+                            _TILE1 = 16
+                            tex.nvfp4_2d_scale_transpose(
+                                _w._rowwise_scale_inv,
+                                _w._columnwise_scale_inv,
+                                (_M1 + _TILE1 - 1) // _TILE1,
+                                (_K1 + _TILE1 - 1) // _TILE1,
+                            )
+                            _ac.copy_(_ar)
                 # Launch GEMM
                 grad_input = torch.empty(in_shape, dtype=dtype, device=device)
                 grouped_grad_input = make_grouped_tensor_from_buffers(
@@ -891,6 +1169,45 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
                     layout="NN",
                     accumulate=False,
                 )
+                import sys as _xg_sys, os as _xg_os
+                if int(_xg_os.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+                    _gi_f = grad_input.detach().float()
+                    _xg_offset = 0
+                    for _xg_gi, _xg_sz in enumerate(split_sizes.tolist()):
+                        if _xg_sz > 0:
+                            _xg_grp = _gi_f[_xg_offset:_xg_offset + _xg_sz]
+                            _xg_sys.__stdout__.write(
+                                f"[BWD_X_GRAD group={_xg_gi} sz={_xg_sz}]"
+                                f" row0[:8]={_xg_grp[0, :8].tolist()}"
+                                f" norm={_xg_grp.norm().item():.4g}"
+                                f" min={_xg_grp.min().item():.4g} max={_xg_grp.max().item():.4g}\n"
+                            )
+                        else:
+                            _xg_sys.__stdout__.write(f"[BWD_X_GRAD group={_xg_gi} sz=0 (empty)]\n")
+                        _xg_offset += _xg_sz
+                    _xg_sys.__stdout__.flush()
+                    # Per-group F32 reference dgrad to isolate GEMM vs dSwiGLU correctness
+                    try:
+                        if fc1_op.single_grouped_parameter:
+                            _w_parts_dbg = grouped_fc1_weight.split_into_quantized_tensors()
+                        else:
+                            _w_parts_dbg = list(grouped_fc1_weight)
+                        _xg_off2 = 0
+                        for _xg_gi2, _xg_sz2 in enumerate(split_sizes.tolist()):
+                            if _xg_sz2 > 0:
+                                _dy_g = fc1_dy_row_data[_xg_off2:_xg_off2 + _xg_sz2].float()
+                                _w_g = _w_parts_dbg[_xg_gi2].dequantize(dtype=torch.float32).view(fc1_weight_shape)
+                                _gi_g = _dy_g @ _w_g
+                                _xg_sys.__stdout__.write(
+                                    f"[BWD_X_GRAD_F32REF group={_xg_gi2} sz={_xg_sz2}]"
+                                    f" row0[:8]={_gi_g[0, :8].tolist()}"
+                                    f" norm={_gi_g.norm().item():.4g}\n"
+                                )
+                            _xg_off2 += _xg_sz2
+                        _xg_sys.__stdout__.flush()
+                    except Exception as _e_dbg:
+                        _xg_sys.__stdout__.write(f"[BWD_X_GRAD_F32REF ERROR] {_e_dbg}\n")
+                        _xg_sys.__stdout__.flush()
 
         # FC1 wgrad GEMM
         fc1_packed_wgrad = None

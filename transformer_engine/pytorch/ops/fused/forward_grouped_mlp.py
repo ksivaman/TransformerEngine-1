@@ -247,6 +247,18 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
                         ); _wdbg_sys.stderr.flush()
                     quantized_fc1_weights.append(weight)
             grouped_fc1_weight = quantized_fc1_weights
+            if use_nvfp4:
+                # NVFP4 discrete A_list grouped GEMM requires amax pointers to be contiguous.
+                row_amaxes = [getattr(weight, "_amax_rowwise", None) for weight in grouped_fc1_weight]
+                if all(amax is not None for amax in row_amaxes):
+                    packed_row_amax = torch.cat([amax.view(-1) for amax in row_amaxes], dim=0).contiguous()
+                    for idx, weight in enumerate(grouped_fc1_weight):
+                        weight._amax_rowwise = packed_row_amax[idx : idx + 1]
+                col_amaxes = [getattr(weight, "_amax_columnwise", None) for weight in grouped_fc1_weight]
+                if all(amax is not None for amax in col_amaxes):
+                    packed_col_amax = torch.cat([amax.view(-1) for amax in col_amaxes], dim=0).contiguous()
+                    for idx, weight in enumerate(grouped_fc1_weight):
+                        weight._amax_columnwise = packed_col_amax[idx : idx + 1]
 
         # Prepare FC2 grouped weight tensor for fused kernels.
         if fc2_op.single_grouped_parameter:
@@ -308,19 +320,16 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             grouped_fc2_weight = quantized_fc2_weights
             if use_nvfp4:
                 # NVFP4 discrete A_list grouped GEMM requires amax pointers to be contiguous.
-                # Not graph safe. Check why this is a requirement from cublas ... or is it? 
                 row_amaxes = [getattr(weight, "_amax_rowwise", None) for weight in grouped_fc2_weight]
                 if all(amax is not None for amax in row_amaxes):
                     packed_row_amax = torch.cat([amax.view(-1) for amax in row_amaxes], dim=0).contiguous()
                     for idx, weight in enumerate(grouped_fc2_weight):
-                        view = packed_row_amax[idx : idx + 1]
-                        weight._amax_rowwise = view
+                        weight._amax_rowwise = packed_row_amax[idx : idx + 1]
                 col_amaxes = [getattr(weight, "_amax_columnwise", None) for weight in grouped_fc2_weight]
                 if all(amax is not None for amax in col_amaxes):
                     packed_col_amax = torch.cat([amax.view(-1) for amax in col_amaxes], dim=0).contiguous()
                     for idx, weight in enumerate(grouped_fc2_weight):
-                        view = packed_col_amax[idx : idx + 1]
-                        weight._amax_columnwise = view
+                        weight._amax_columnwise = packed_col_amax[idx : idx + 1]
 
         # Some wrapper-copy paths may drop grouped storage metadata; enforce defaults.
         if getattr(grouped_fc1_weight, "with_gemm_swizzled_scales", None) is None and isinstance(
@@ -415,7 +424,8 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
                 _amax_x = getattr(grouped_fc1_x, '_amax_rowwise')
             _amax_x = _amax_x.float().view(-1)
             if _amax_x.numel() != num_groups:
-                _amax_x = _amax_x.expand(num_groups).contiguous()
+                # Single global amax (or unexpected size): broadcast global max to all groups.
+                _amax_x = _amax_x.amax().view(1).expand(num_groups).contiguous()
         if not torch.cuda.is_current_stream_capturing():
             import sys as _fsys3b; _fsys3b.stderr.write(
                 f"[FWD fc1_x_scales after view dtype] shape={fc1_x_scales.shape} "
@@ -423,16 +433,17 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             ); _fsys3b.stderr.flush()
         if use_nvfp4 and getattr(grouped_fc1_x, 'with_gemm_swizzled_scales', False):
             # RHT kernel with optimize_for_gemm=True writes scales directly in
-            # SwizzledSFALayout (cuDNN-compatible format). Permute to cuDNN format.
+            # SwizzledSFALayout (cuDNN-compatible format). Only kernel-format permute needed.
             fc1_x_scales = fc1_x_scales.view(
                 1, in_shape[0] // 128, data_k // k_sf_divisor, 32, 4, 4,
             )
             fc1_x_scales = fc1_x_scales.permute(3, 4, 1, 5, 2, 0)
         else:
-            # Unswizzled TE format: permute to cuDNN format
+            # Unswizzled TE format: convert unswizzled → swizzled, then to kernel format.
             fc1_x_scales = fc1_x_scales.view(
-                1, in_shape[0] // 128, data_k // k_sf_divisor, 32, 4, 4,
+                1, in_shape[0] // 128, 4, 32, data_k // k_sf_divisor, 4,
             )
+            fc1_x_scales = fc1_x_scales.permute(0, 1, 4, 3, 2, 5).contiguous()
             fc1_x_scales = fc1_x_scales.permute(3, 4, 1, 5, 2, 0)
 
         # Pack weight tensors
@@ -488,7 +499,8 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
                 _amax_w = (grouped_fc1_weight.amax if grouped_fc1_weight.amax is not None
                            else getattr(grouped_fc1_weight, '_amax_rowwise')).float().view(-1)
                 if _amax_w.numel() != num_groups:
-                    _amax_w = _amax_w.expand(num_groups).contiguous()
+                    # Single global amax (or unexpected size): broadcast global max to all groups.
+                    _amax_w = _amax_w.amax().view(1).expand(num_groups).contiguous()
                 else:
                     _amax_w = _amax_w.contiguous()
             else:
@@ -520,6 +532,11 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             _nvfp4_fp8_max = 448.0
             alpha_tensor = (_amax_x * _amax_w / (_nvfp4_fp4_max ** 2 * _nvfp4_fp8_max ** 2)).contiguous().to(torch.float32)
             norm_const_tensor_arg = None
+            if int(_os.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+                import sys as _fsys_alpha
+                _fsys_alpha.stderr.write(
+                    f"[FWD alpha_tensor per-group] amax_x={_amax_x.tolist()} amax_w={_amax_w.tolist()} alpha={alpha_tensor.tolist()}\n"
+                ); _fsys_alpha.stderr.flush()
         else:
             alpha_tensor, norm_const_tensor = self._get_kernel_constants(
                 num_groups=num_groups, dtype=dtype, device=device
@@ -627,6 +644,19 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             _fsys2b.stderr.write(
                 f"[EXP c_tensor row0[:8]]={swiglu_in[0,:8].float().tolist()}\n"
             ); _fsys2b.stderr.flush()
+            _offset_c = 0
+            for _gi_c, _sz_c in enumerate(split_sizes.tolist()):
+                if _sz_c > 0:
+                    _grp_c = swiglu_in[_offset_c:_offset_c + _sz_c].float()
+                    _fsys2b.stderr.write(
+                        f"[FWD c_tensor group={_gi_c} sz={_sz_c}]"
+                        f" row0[:8]={_grp_c[0, :8].tolist()}"
+                        f" norm={_grp_c.norm().item():.4g} min={_grp_c.min().item():.4g} max={_grp_c.max().item():.4g}\n"
+                    )
+                else:
+                    _fsys2b.stderr.write(f"[FWD c_tensor group={_gi_c} sz=0 (empty)]\n")
+                _offset_c += _sz_c
+            _fsys2b.stderr.flush()
         if use_nvfp4 and int(_os2b.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
             # ---- MANUAL VERIFICATION BLOCK ----
             # Decode A row 0 fp4 values and W row 0 fp4 values.
@@ -708,6 +738,21 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
                 ); _fsys2.stderr.flush()
             fc2_in = fc2_in.permute(2, 0, 1)
             fc2_in = fc2_in.view(in_shape[0], fc2_weight_shape[1]).contiguous()
+            if int(_os2b.getenv("SLURM_PROCID", 0)) == 0 and not torch.cuda.is_current_stream_capturing():
+                import sys as _fsys_d
+                _offset_d = 0
+                for _gi_d, _sz_d in enumerate(split_sizes.tolist()):
+                    if _sz_d > 0:
+                        _grp_d = fc2_in[_offset_d:_offset_d + _sz_d].float()
+                        _fsys_d.stderr.write(
+                            f"[FWD d_tensor group={_gi_d} sz={_sz_d}]"
+                            f" row0[:8]={_grp_d[0, :8].tolist()}"
+                            f" norm={_grp_d.norm().item():.4g} max={_grp_d.abs().max().item():.4g}\n"
+                        )
+                    else:
+                        _fsys_d.stderr.write(f"[FWD d_tensor group={_gi_d} sz=0 (empty)]\n")
+                    _offset_d += _sz_d
+                _fsys_d.stderr.flush()
             for quantizer in fc2_input_quantizers:
                 quantizer.set_usage(rowwise=True, columnwise=weight_requires_grad)
                 quantizer.optimize_for_gemm = True
@@ -775,10 +820,24 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             _fsys_fc2out.__stdout__.write(
                 f"[FWD_FC2_OUT] shape={list(fc2_out.shape)}"
                 f"  nan={_fc2out_f.isnan().any().item()}"
-                f"  min={_fc2out_f.min().item():.4g} max={_fc2out_f.abs().max().item():.4g}"
+                f"  min={_fc2out_f.min().item():.4g} max={_fc2out_f.max().item():.4g}"
                 f"  norm={_fc2out_f.norm().item():.4g}"
                 f"  row0[:8]={_fc2out_f[0, :8].tolist()}\n"
             )
+            _fsys_fc2out.__stdout__.flush()
+            _offset_fc2 = 0
+            for _gi_fc2, _sz_fc2 in enumerate(split_sizes.tolist()):
+                if _sz_fc2 > 0:
+                    _grp_fc2 = _fc2out_f[_offset_fc2:_offset_fc2 + _sz_fc2]
+                    _fsys_fc2out.__stdout__.write(
+                        f"[FWD_FC2_OUT group={_gi_fc2} sz={_sz_fc2}]"
+                        f" row0[:8]={_grp_fc2[0, :8].tolist()}"
+                        f" norm={_grp_fc2.norm().item():.4g}"
+                        f" min={_grp_fc2.min().item():.4g} max={_grp_fc2.max().item():.4g}\n"
+                    )
+                else:
+                    _fsys_fc2out.__stdout__.write(f"[FWD_FC2_OUT group={_gi_fc2} sz=0 (empty)]\n")
+                _offset_fc2 += _sz_fc2
             _fsys_fc2out.__stdout__.flush()
 
         # Prepare input tensors for backward pass
