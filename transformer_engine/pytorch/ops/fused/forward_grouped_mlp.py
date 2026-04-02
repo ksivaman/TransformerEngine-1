@@ -307,6 +307,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         fc1_x_data = fc1_x_data.unsqueeze(0).permute(1, 2, 0)
         fc1_x_scales = grouped_fc1_x.scale_inv
         fc1_x_scales = fc1_x_scales.view(dtype=torch.float8_e8m0fnu)
+        print(f"BB {num_groups} groups {fc1_x_scales.shape} scale shape {fc1_x_data.shape} input shape", flush=True)
         fc1_x_scales = fc1_x_scales.view(
             1,
             in_shape[0] // 128,
@@ -356,6 +357,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             fc1_w_data = fc1_w_data.view(num_groups, fc1_weight_shape[0], fc1_weight_shape[1])
             fc1_w_data = fc1_w_data.permute(1, 2, 0)
             fc1_w_scales = fc1_weight_for_gemm.scale_inv.view(dtype=torch.float8_e8m0fnu)
+            print(f"CC {num_groups} groups {fc1_w_scales.shape} scale shape {fc1_w_data.shape} weight shape", flush=True)
             fc1_w_scales = fc1_w_scales.view(
                 num_groups,
                 fc1_weight_shape[0] // 128,
@@ -453,6 +455,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             fc2_w_data = fc2_w_data.permute(1, 2, 0)
 
             fc2_w_scales = fc2_weight_for_gemm.scale_inv.view(dtype=torch.float8_e8m0fnu)
+            print(f"AA {num_groups} groups {fc2_w_scales.shape} scale shape {fc2_w_data.shape} weight shape", flush=True)
             fc2_w_scales = fc2_w_scales.view(
                 num_groups,
                 fc2_weight_shape[0] // 128,

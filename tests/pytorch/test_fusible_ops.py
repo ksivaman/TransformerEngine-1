@@ -3569,6 +3569,159 @@ class TestSequentialModules:
             assert_close(fc1.weight.grad, fc1_w_ref_grad, **tols)
             assert_close(fc2.weight.grad, fc2_w_ref_grad, **tols)
 
+    @pytest.mark.skipif(not mxfp8_available, reason=reason_for_no_mxfp8)
+    def test_grouped_mlp_scale_inv_padding(self, *, device: torch.device = "cuda") -> None:
+        """MXFP8 fused grouped MLP with non-trivial scale_inv padding (dims not multiples of 128/256)."""
+
+        # FC1: activation (65536, 2880), weight (5760, 2880). FC2: (65536, 2880) @ (2880, 2880).
+        tokens = 65536
+        hidden_size = 2880
+        group_size = 1
+        bias = False
+        single_grouped_weight = True
+        accumulate_into_main_grad = False
+        delay_wgrad_compute = False
+        glu_interleave_size = 32
+        quantization = "mxfp8"
+        dtype = torch.bfloat16 if is_bf16_available() else torch.float16
+
+        split_sizes = torch.tensor([tokens], dtype=torch.int64, device=device)
+        in_shape = (tokens, hidden_size)
+        out_shape = in_shape
+
+        maybe_skip_quantization(quantization, dims=in_shape, device=device, dtype=dtype)
+        if not te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8.is_supported():
+            pytest.skip("MXFP8 fused grouped MLP is not supported on this system")
+
+        x_ref, x_test = make_reference_and_test_tensors(
+            in_shape,
+            min=-0.25,
+            max=0.25,
+            quantization=quantization,
+            test_dtype=dtype,
+            test_device=device,
+        )
+        dy_ref, dy_test = make_reference_and_test_tensors(
+            out_shape,
+            min=-0.25,
+            max=0.25,
+            quantization=quantization,
+            test_dtype=dtype,
+            test_device=device,
+            requires_grad=False,
+        )
+        probs_ref, probs_test = make_reference_and_test_tensors(
+            (in_shape[0],),
+            test_dtype=dtype,
+            test_device=device,
+        )
+
+        fc1_w_ref, fc1_w_test = make_reference_and_test_tensors(
+            (2 * hidden_size, hidden_size),
+            min=-0.25,
+            max=0.25,
+            quantization=quantization,
+            test_dtype=dtype,
+            test_device=device,
+        )
+        fc2_w_ref, fc2_w_test = make_reference_and_test_tensors(
+            (hidden_size, hidden_size),
+            min=-0.25,
+            max=0.25,
+            quantization=quantization,
+            test_dtype=dtype,
+            test_device=device,
+        )
+
+        xs = torch.split(x_ref, split_sizes.tolist())
+        probs = torch.split(probs_ref, split_sizes.tolist())
+        ys = []
+        for group_idx in range(group_size):
+            x = xs[group_idx]
+            x = torch.nn.functional.linear(x, fc1_w_ref, bias=None)
+            x = x.reshape(
+                -1,
+                2 * hidden_size // (2 * glu_interleave_size),
+                2,
+                glu_interleave_size,
+            )
+            x = x.transpose(1, 2)
+            x = x.reshape(-1, 2 * hidden_size)
+            x1, x2 = x.chunk(2, dim=-1)
+            x = torch.nn.functional.silu(x1) * x2
+            x = x * probs[group_idx].unsqueeze(-1)
+            x = torch.nn.functional.linear(x, fc2_w_ref, bias=None)
+            ys.append(x)
+        y_ref = torch.cat(ys)
+        y_ref.backward(dy_ref)
+
+        recipe = make_recipe(quantization)
+        with te.quantized_model_init(enabled=True, recipe=recipe):
+            fc1 = te_ops.GroupedLinear(
+                group_size,
+                hidden_size,
+                2 * hidden_size,
+                bias=bias,
+                device=device,
+                dtype=dtype,
+                single_grouped_weight=single_grouped_weight,
+                accumulate_into_main_grad=accumulate_into_main_grad,
+                delay_wgrad_compute=delay_wgrad_compute,
+            )
+            fc2 = te_ops.GroupedLinear(
+                group_size,
+                hidden_size,
+                hidden_size,
+                bias=bias,
+                device=device,
+                dtype=dtype,
+                single_grouped_weight=single_grouped_weight,
+                accumulate_into_main_grad=accumulate_into_main_grad,
+                delay_wgrad_compute=delay_wgrad_compute,
+            )
+            module = te_ops.Sequential(
+                fc1,
+                te_ops.ScaledSwiGLU(glu_interleave_size=glu_interleave_size),
+                fc2,
+            )
+
+        with torch.no_grad():
+            fc1_weights = fc1.weight.quantized_tensors
+            if fc1_weights is None:
+                fc1_weights = fc1.weight.split_into_quantized_tensors()
+            fc2_weights = fc2.weight.quantized_tensors
+            if fc2_weights is None:
+                fc2_weights = fc2.weight.split_into_quantized_tensors()
+            fc1_weights[0].copy_(fc1_w_test)
+            fc2_weights[0].copy_(fc2_w_test)
+
+        with te.autocast(enabled=True, recipe=recipe):
+            y_test = module(x_test, split_sizes, probs_test, split_sizes)
+        y_test.backward(dy_test)
+        if delay_wgrad_compute:
+            fc1.backward_dw()
+            fc2.backward_dw()
+
+        forward_ops = module._module_groups[0]._forward_ops
+        backward_ops = module._module_groups[0]._backward_ops
+        assert len(forward_ops) == 1
+        assert isinstance(
+            forward_ops[0][0],
+            te_ops.fused.ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8,
+        )
+        assert len(backward_ops) == 1
+        assert isinstance(
+            backward_ops[0][0],
+            te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8,
+        )
+
+        tols = {"rtol": 0.125, "atol": 0.25}
+        assert_close(y_test, y_ref, **tols)
+        assert_close_grads(x_test, x_ref, **tols)
+        assert_close_grads(probs_test, probs_ref, **tols)
+        assert_close(fc1.weight.grad, torch.stack([fc1_w_ref.grad], dim=0), **tols)
+        assert_close(fc2.weight.grad, torch.stack([fc2_w_ref.grad], dim=0), **tols)
+
     @pytest.mark.parametrize("dtype", _dtypes)
     @pytest.mark.parametrize("single_grouped_weight", (False, True))
     @pytest.mark.parametrize("accumulate_into_main_grad", (False, True))
