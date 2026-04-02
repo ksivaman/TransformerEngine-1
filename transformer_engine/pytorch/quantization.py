@@ -1170,7 +1170,14 @@ class MXFP8BlockScalingRecipeState(RecipeState):
         # TODO(ksivamani); Find better design for this, adding here to avoid circular import.
         from .tensor.mxfp8_tensor import MXFP8Quantizer
 
-        return [MXFP8Quantizer(self.dtype) for i in range(self.num_quantizers)]
+        return [
+            MXFP8Quantizer(
+                self.dtype,
+                rowwise_scale_inv_align=self.recipe.rowwise_scale_inv_align,
+                columnwise_scale_inv_align=self.recipe.columnwise_scale_inv_align,
+            )
+            for _ in range(self.num_quantizers)
+        ]
 
 
 class Float8BlockScalingRecipeState(RecipeState):
@@ -1333,6 +1340,8 @@ class NVFP4BlockScalingRecipeState(RecipeState):
                     with_post_rht_amax=qparams.random_hadamard_transform,
                     with_2d_quantization=qparams.fp4_2d_quantization,
                     stochastic_rounding=qparams.stochastic_rounding,
+                    rowwise_scale_inv_align=self.recipe.rowwise_scale_inv_align,
+                    columnwise_scale_inv_align=self.recipe.columnwise_scale_inv_align,
                 )
 
             return [_make_quantizer(idx) for idx in range(self.num_quantizers)]
@@ -1347,6 +1356,8 @@ class NVFP4BlockScalingRecipeState(RecipeState):
                     with_post_rht_amax=self.recipe.fp4_quant_bwd_grad.random_hadamard_transform,
                     with_2d_quantization=self.recipe.fp4_quant_bwd_grad.fp4_2d_quantization,
                     stochastic_rounding=self.recipe.fp4_quant_bwd_grad.stochastic_rounding,
+                    rowwise_scale_inv_align=self.recipe.rowwise_scale_inv_align,
+                    columnwise_scale_inv_align=self.recipe.columnwise_scale_inv_align,
                 )
                 for _ in range(self.num_quantizers)
             ]

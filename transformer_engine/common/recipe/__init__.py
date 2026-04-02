@@ -6,7 +6,7 @@
 from __future__ import annotations
 import os
 from enum import Enum
-from typing import Any, Literal, Optional, Union, Callable, NamedTuple
+from typing import Any, Literal, Optional, Tuple, Union, Callable, NamedTuple
 from dataclasses import field
 from pydantic.dataclasses import dataclass
 
@@ -80,6 +80,50 @@ class QParams:
             f"random_hadamard_transform={self.random_hadamard_transform},\n"
             f"stochastic_rounding={self.stochastic_rounding},\n"
             f"fp4_2d_quantization={self.fp4_2d_quantization}\n)"
+        )
+
+
+_ALLOWED_MXFP8_ROWWISE_SCALE_INV_ALIGN = frozenset({(128, 4), (128, 128)})
+_ALLOWED_MXFP8_COLUMNWISE_SCALE_INV_ALIGN = frozenset({(4, 128), (128, 128)})
+_ALLOWED_NVFP4_ROWWISE_SCALE_INV_ALIGN = frozenset({(128, 4), (128, 128)})
+_ALLOWED_NVFP4_COLUMNWISE_SCALE_INV_ALIGN = frozenset({(128, 4), (128, 128)})
+
+
+def _validate_mxfp8_scale_inv_align(
+    rowwise_scale_inv_align: Tuple[int, int],
+    columnwise_scale_inv_align: Tuple[int, int],
+) -> None:
+    """Allow only (128, 4) or (128, 128) rowwise; (4, 128) or (128, 128) columnwise."""
+    rw = tuple(rowwise_scale_inv_align)
+    cw = tuple(columnwise_scale_inv_align)
+    if rw not in _ALLOWED_MXFP8_ROWWISE_SCALE_INV_ALIGN:
+        raise ValueError(
+            "MXFP8 rowwise_scale_inv_align must be (128, 4) or (128, 128), "
+            f"got {rw!r}"
+        )
+    if cw not in _ALLOWED_MXFP8_COLUMNWISE_SCALE_INV_ALIGN:
+        raise ValueError(
+            "MXFP8 columnwise_scale_inv_align must be (4, 128) or (128, 128), "
+            f"got {cw!r}"
+        )
+
+
+def _validate_nvfp4_scale_inv_align(
+    rowwise_scale_inv_align: Tuple[int, int],
+    columnwise_scale_inv_align: Tuple[int, int],
+) -> None:
+    """Allow only (128, 4) or (128, 128) for each of rowwise and columnwise."""
+    rw = tuple(rowwise_scale_inv_align)
+    cw = tuple(columnwise_scale_inv_align)
+    if rw not in _ALLOWED_NVFP4_ROWWISE_SCALE_INV_ALIGN:
+        raise ValueError(
+            "NVFP4 rowwise_scale_inv_align must be (128, 4) or (128, 128), "
+            f"got {rw!r}"
+        )
+    if cw not in _ALLOWED_NVFP4_COLUMNWISE_SCALE_INV_ALIGN:
+        raise ValueError(
+            "NVFP4 columnwise_scale_inv_align must be (128, 4) or (128, 128), "
+            f"got {cw!r}"
         )
 
 
@@ -291,21 +335,35 @@ class MXFP8BlockScaling(Recipe):
     fp8_format : {Format.E4M3, Format.HYBRID}, default = Format.E4M3
                 Controls the FP8 data format used during forward and backward
                 pass.
+    rowwise_scale_inv_align : tuple[int, int], default = (128, 4)
+                Rowwise 2D scale_inv padding. Allowed values only: ``(128, 4)``
+                or ``(128, 128)``.
+    columnwise_scale_inv_align : tuple[int, int], default = (4, 128)
+                Columnwise 2D scale_inv padding. Allowed values only: ``(4, 128)``
+                or ``(128, 128)``.
     """
 
     margin: int = 0
     fp8_format: Format = Format.E4M3
     fp8_dpa: bool = False
     fp8_mha: bool = False
+    rowwise_scale_inv_align: Tuple[int, int] = (128, 4)
+    columnwise_scale_inv_align: Tuple[int, int] = (4, 128)
 
     def __post_init__(self) -> None:
         assert self.fp8_format != Format.E5M2, "Pure E5M2 training is not supported."
+        _validate_mxfp8_scale_inv_align(
+            self.rowwise_scale_inv_align,
+            self.columnwise_scale_inv_align,
+        )
 
     def __repr__(self) -> str:
         return (
             f"recipe_type={self.__class__.__name__}, "
             f"margin={self.margin}, "
-            f"format={str(self.fp8_format).split('.')[1]}"
+            f"format={str(self.fp8_format).split('.')[1]}, "
+            f"rowwise_scale_inv_align={self.rowwise_scale_inv_align}, "
+            f"columnwise_scale_inv_align={self.columnwise_scale_inv_align}"
         )
 
 
@@ -435,6 +493,12 @@ class NVFP4BlockScaling(Recipe):
              If set to `True`, stochastic rounding is disabled during quantization for all tensors.
     disable_2d_quantization : bool, default = False
              If set to `True`, 1D block scaling with block size 16 is used for all tensors.
+    rowwise_scale_inv_align : tuple[int, int], default = (128, 4)
+             Rowwise 2D scale_inv padding. Allowed values only: ``(128, 4)``
+             or ``(128, 128)``.
+    columnwise_scale_inv_align : tuple[int, int], default = (128, 4)
+             Columnwise 2D scale_inv padding. Allowed values only: ``(128, 4)``
+             or ``(128, 128)``.
     """
 
     # Configuration envvars
@@ -450,10 +514,16 @@ class NVFP4BlockScaling(Recipe):
     # Not applying quantization to attention for now
     fp8_dpa: bool = False
     fp8_mha: bool = False
+    rowwise_scale_inv_align: Tuple[int, int] = (128, 4)
+    columnwise_scale_inv_align: Tuple[int, int] = (128, 4)
 
     def __post_init__(self) -> None:
         assert self.fp4_format == Format.E2M1, "Only E2M1 is supported for NVFP4 scaling"
         assert self.fp8_format == Format.E4M3, "Only E4M3 is supported for NVFP4 scaling"
+        _validate_nvfp4_scale_inv_align(
+            self.rowwise_scale_inv_align,
+            self.columnwise_scale_inv_align,
+        )
 
         # Quantization params
         # Note: RHT is currently only applied to column-wise usage so that
@@ -481,6 +551,8 @@ class NVFP4BlockScaling(Recipe):
             f"fp8_format={str(self.fp8_format).split('.')[1]}, "
             f"fp8_dpa={self.fp8_dpa}, "
             f"fp8_mha={self.fp8_mha}, "
+            f"rowwise_scale_inv_align={self.rowwise_scale_inv_align}, "
+            f"columnwise_scale_inv_align={self.columnwise_scale_inv_align}, "
             f"fp4_quant_fwd_inp={self.fp4_quant_fwd_inp}, "
             f"fp4_quant_fwd_weight={self.fp4_quant_fwd_weight}, "
             f"fp4_quant_bwd_grad={self.fp4_quant_bwd_grad}, "
