@@ -343,8 +343,6 @@ static void CheckGroupedScaleInv(const GroupedTensor &t, const std::string &name
   // Determine expected dtype based on data type and scaling mode
   if (is_fp8_dtype(t.dtype()) && is_tensor_scaling(t.scaling_mode)) {
     check_scales(DType::kFloat32);
-  } else if (is_fp8_block_scaling(t.scaling_mode)) {
-    check_scales(DType::kFloat32);
   } else if (is_mxfp8_scaling(t.scaling_mode)) {
     check_scales(DType::kFloat8E8M0);
   } else if (is_nvfp4_scaling(t.scaling_mode)) {
@@ -1330,20 +1328,4 @@ NVTEShape nvte_get_grouped_tensor_logical_shape(const NVTEGroupedTensor tensor) 
   }
   const auto &t = *transformer_engine::convertNVTEGroupedTensorCheck(tensor);
   return t.logical_shape;
-}
-
-void nvte_set_grouped_tensor_swizzled_scales(NVTEGroupedTensor tensor, uint8_t val) {
-  if (tensor == nullptr) {
-    return;
-  }
-  auto &t = *transformer_engine::convertNVTEGroupedTensorCheck(tensor);
-  t.with_gemm_swizzled_scales = (val != 0);
-}
-
-uint8_t nvte_get_grouped_tensor_swizzled_scales(const NVTEGroupedTensor tensor) {
-  if (tensor == nullptr) {
-    return 0;
-  }
-  const auto &t = *transformer_engine::convertNVTEGroupedTensorCheck(tensor);
-  return t.with_gemm_swizzled_scales ? 1 : 0;
 }
