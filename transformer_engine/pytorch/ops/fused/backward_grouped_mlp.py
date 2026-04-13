@@ -467,12 +467,17 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             fc2_dglu_kwargs["b_tensor"] = fc2_w_data
             fc2_dglu_kwargs["sfb_tensor"] = fc2_w_scales
         else:
-            fc2_b_ptrs, fc2_sfb_ptrs, _fc2_sw = tex.get_device_pointer_for_data_and_scales(
-                [w._columnwise_data for w in grouped_fc2_weight],
-                [w._columnwise_scale_inv for w in grouped_fc2_weight],
-                swizzle=True,
-                rowwise=False,
-                data_dtype=grouped_fc2_weight[0]._fp8_dtype,
+            # No data padding for the DGLU kernel — padding N would change the
+            # output dimension (n_out = 2*N) and require a differently-shaped
+            # c_tensor from the forward pass.
+            fc2_b_ptrs, fc2_sfb_ptrs, _fc2_sw, _fc2_dpad = (
+                tex.get_device_pointer_for_data_and_scales(
+                    [w._columnwise_data for w in grouped_fc2_weight],
+                    [w._columnwise_scale_inv for w in grouped_fc2_weight],
+                    swizzle=True,
+                    rowwise=False,
+                    data_dtype=grouped_fc2_weight[0]._fp8_dtype,
+                )
             )
             fc2_dglu_kwargs["b_ptrs"] = fc2_b_ptrs
             fc2_dglu_kwargs["sfb_ptrs"] = fc2_sfb_ptrs
@@ -573,6 +578,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
                 "use_dynamic_sched": True,
             }
 
+            fc1_dgrad_needs_n_slice = False
             if fc1_op.single_grouped_weight:
                 # Clone and swizzle scales for GEMM
                 fc1_weight_for_gemm = grouped_fc1_weight.copy()
@@ -598,22 +604,30 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
                 fc1_dgrad_kwargs["b_tensor"] = fc1_w_data
                 fc1_dgrad_kwargs["sfb_tensor"] = fc1_w_scales
             else:
-                fc1_b_ptrs, fc1_sfb_ptrs, _ = tex.get_device_pointer_for_data_and_scales(
-                    [w._columnwise_data for w in grouped_fc1_weight],
-                    [w._columnwise_scale_inv for w in grouped_fc1_weight],
-                    swizzle=True,
-                    rowwise=False,
-                    data_dtype=grouped_fc1_weight[0]._fp8_dtype,
+                fc1_padded_n = ((fc1_weight_shape[1] + 127) // 128) * 128
+                fc1_dgrad_needs_n_slice = fc1_padded_n != fc1_weight_shape[1]
+                fc1_b_ptrs, fc1_sfb_ptrs, _fc1_sw, _fc1_dpad = (
+                    tex.get_device_pointer_for_data_and_scales(
+                        [w._columnwise_data for w in grouped_fc1_weight],
+                        [w._columnwise_scale_inv for w in grouped_fc1_weight],
+                        swizzle=True,
+                        rowwise=False,
+                        data_dtype=grouped_fc1_weight[0]._fp8_dtype,
+                        pad_data_to_multiple=128,
+                    )
                 )
 
                 fc1_dgrad_kwargs["b_ptrs"] = fc1_b_ptrs
                 fc1_dgrad_kwargs["sfb_ptrs"] = fc1_sfb_ptrs
-                fc1_dgrad_kwargs["n"] = fc1_weight_shape[1]
+                fc1_dgrad_kwargs["n"] = fc1_padded_n
                 fc1_dgrad_kwargs["b_dtype"] = torch.float8_e4m3fn
                 fc1_dgrad_kwargs["b_major"] = "n"
 
             fc1_dgrad_kernel_out = self.grouped_gemm_quant_kernel()(**fc1_dgrad_kwargs)
-            grad_input = fc1_dgrad_kernel_out["d_tensor"].view(in_shape)
+            fc1_dgrad_d = fc1_dgrad_kernel_out["d_tensor"]
+            if fc1_dgrad_needs_n_slice:
+                fc1_dgrad_d = fc1_dgrad_d[:, :fc1_weight_shape[1], :]
+            grad_input = fc1_dgrad_d.view(in_shape)
 
         # FC1 wgrad GEMM
         fc1_grad_params = _compute_grad_params(

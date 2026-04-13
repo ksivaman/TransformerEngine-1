@@ -467,7 +467,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         &transformer_engine::pytorch::get_device_pointer_for_data_and_scales,
         "Swizzle scales and collect data/scale device pointers into device tensors",
         py::arg("data_tensors"), py::arg("scale_tensors"), py::arg("swizzle") = false,
-        py::arg("rowwise"), py::arg("data_dtype"), py::call_guard<py::gil_scoped_release>());
+        py::arg("rowwise"), py::arg("data_dtype"), py::arg("pad_data_to_multiple") = 0,
+        py::call_guard<py::gil_scoped_release>());
   m.def("splits_to_offsets", &transformer_engine::pytorch::splits_to_offsets,
         "Compute grouped tensor offsets from split sizes", py::arg("first_dims"),
         py::arg("logical_last_dim"), py::call_guard<py::gil_scoped_release>());

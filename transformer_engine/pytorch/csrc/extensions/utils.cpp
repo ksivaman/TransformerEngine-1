@@ -48,9 +48,9 @@ std::vector<at::Tensor> convert_host_pointers_to_tensor(
   return outputs;
 }
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor> get_device_pointer_for_data_and_scales(
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> get_device_pointer_for_data_and_scales(
     std::vector<at::Tensor> data_tensors, std::vector<at::Tensor> scale_tensors, bool swizzle,
-    bool rowwise, transformer_engine::DType data_dtype) {
+    bool rowwise, transformer_engine::DType data_dtype, int64_t pad_data_to_multiple) {
   const size_t num_tensors = data_tensors.size();
   NVTE_CHECK(num_tensors > 0, "data_tensors must not be empty.");
   NVTE_CHECK(num_tensors == scale_tensors.size(),
@@ -59,18 +59,60 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> get_device_pointer_for_data_and_s
   const auto device = data_tensors[0].device();
   auto stream = at::cuda::getCurrentCUDAStream();
 
-  // Infer data shape from the first data tensor (expected 2D: n x k)
   NVTE_CHECK(data_tensors[0].dim() == 2,
              "data_tensors elements must be 2D, got dim=", data_tensors[0].dim());
+
+  const int64_t orig_dim0 = data_tensors[0].size(0);
+  const int64_t dim1 = data_tensors[0].size(1);
+
+  // Optionally pad the first dimension so that cuDNN's tile_atom_to_shape_SF
+  // produces the full BlockScaledBasicChunk atom layout.
+  const int64_t padded_dim0 =
+      (pad_data_to_multiple > 0)
+          ? ((orig_dim0 + pad_data_to_multiple - 1) / pad_data_to_multiple) * pad_data_to_multiple
+          : orig_dim0;
+  const bool needs_data_padding = (padded_dim0 != orig_dim0);
+
   NVTEShape data_shape{};
   data_shape.ndim = 2;
-  data_shape.data[0] = static_cast<size_t>(data_tensors[0].size(0));
-  data_shape.data[1] = static_cast<size_t>(data_tensors[0].size(1));
+  data_shape.data[0] = static_cast<size_t>(padded_dim0);
+  data_shape.data[1] = static_cast<size_t>(dim1);
 
-  // Collect data device pointers
+  at::Tensor padded_data_keepalive;
   std::vector<uint64_t> data_host_ptrs(num_tensors);
-  for (size_t i = 0; i < num_tensors; ++i) {
-    data_host_ptrs[i] = reinterpret_cast<uintptr_t>(data_tensors[i].data_ptr());
+
+  if (needs_data_padding) {
+    const auto elem_size = data_tensors[0].element_size();
+    const size_t per_expert_bytes = static_cast<size_t>(padded_dim0) * dim1 * elem_size;
+    const size_t total_bytes = num_tensors * per_expert_bytes;
+    padded_data_keepalive =
+        at::zeros({static_cast<int64_t>(total_bytes)},
+                  at::TensorOptions().dtype(at::kByte).device(device));
+    uint8_t* buf = reinterpret_cast<uint8_t*>(padded_data_keepalive.data_ptr());
+
+    for (size_t i = 0; i < num_tensors; ++i) {
+      uint8_t* expert_ptr = buf + i * per_expert_bytes;
+      at::Tensor padded_view;
+      if (rowwise) {
+        padded_view = at::from_blob(expert_ptr, {padded_dim0, dim1},
+                                    {dim1 * elem_size, elem_size},
+                                    at::TensorOptions().dtype(data_tensors[i].dtype())
+                                        .device(device));
+      } else {
+        padded_view = at::from_blob(expert_ptr, {padded_dim0, dim1},
+                                    {elem_size, padded_dim0 * elem_size},
+                                    at::TensorOptions().dtype(data_tensors[i].dtype())
+                                        .device(device));
+      }
+      padded_view.narrow(0, 0, orig_dim0).copy_(data_tensors[i]);
+      data_host_ptrs[i] = reinterpret_cast<uintptr_t>(expert_ptr);
+    }
+  } else {
+    padded_data_keepalive =
+        at::empty({0}, at::TensorOptions().dtype(at::kByte).device(device));
+    for (size_t i = 0; i < num_tensors; ++i) {
+      data_host_ptrs[i] = reinterpret_cast<uintptr_t>(data_tensors[i].data_ptr());
+    }
   }
 
   // Swizzle scales and collect scale pointers
@@ -159,7 +201,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> get_device_pointer_for_data_and_s
   auto data_ptrs = collect_pointers_in_device_tensor(data_host_ptrs, device, stream);
   auto scale_ptrs = collect_pointers_in_device_tensor(scale_host_ptrs, device, stream);
 
-  return {std::move(data_ptrs), std::move(scale_ptrs), std::move(swizzled_scales_keepalive)};
+  return {std::move(data_ptrs), std::move(scale_ptrs), std::move(swizzled_scales_keepalive),
+          std::move(padded_data_keepalive)};
 }
 
 }  // namespace transformer_engine::pytorch
