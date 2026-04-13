@@ -48,9 +48,9 @@ std::vector<at::Tensor> convert_host_pointers_to_tensor(
   return outputs;
 }
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> get_device_pointer_for_data_and_scales(
+std::tuple<at::Tensor, at::Tensor, at::Tensor> get_device_pointer_for_data_and_scales(
     std::vector<at::Tensor> data_tensors, std::vector<at::Tensor> scale_tensors, bool swizzle,
-    bool rowwise, transformer_engine::DType data_dtype, int64_t pad_data_to_multiple) {
+    bool rowwise, transformer_engine::DType data_dtype) {
   const size_t num_tensors = data_tensors.size();
   NVTE_CHECK(num_tensors > 0, "data_tensors must not be empty.");
   NVTE_CHECK(num_tensors == scale_tensors.size(),
@@ -62,57 +62,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> get_device_pointer_fo
   NVTE_CHECK(data_tensors[0].dim() == 2,
              "data_tensors elements must be 2D, got dim=", data_tensors[0].dim());
 
-  const int64_t orig_dim0 = data_tensors[0].size(0);
+  const int64_t dim0 = data_tensors[0].size(0);
   const int64_t dim1 = data_tensors[0].size(1);
 
-  // Optionally pad the first dimension so that cuDNN's tile_atom_to_shape_SF
-  // produces the full BlockScaledBasicChunk atom layout.
-  const int64_t padded_dim0 =
-      (pad_data_to_multiple > 0)
-          ? ((orig_dim0 + pad_data_to_multiple - 1) / pad_data_to_multiple) * pad_data_to_multiple
-          : orig_dim0;
-  const bool needs_data_padding = (padded_dim0 != orig_dim0);
-
-  NVTEShape data_shape{};
-  data_shape.ndim = 2;
-  data_shape.data[0] = static_cast<size_t>(padded_dim0);
-  data_shape.data[1] = static_cast<size_t>(dim1);
-
-  at::Tensor padded_data_keepalive;
+  // Data pointers — always use originals, no padding.
   std::vector<uint64_t> data_host_ptrs(num_tensors);
-
-  if (needs_data_padding) {
-    const auto elem_size = data_tensors[0].element_size();
-    const size_t per_expert_bytes = static_cast<size_t>(padded_dim0) * dim1 * elem_size;
-    const size_t total_bytes = num_tensors * per_expert_bytes;
-    padded_data_keepalive =
-        at::zeros({static_cast<int64_t>(total_bytes)},
-                  at::TensorOptions().dtype(at::kByte).device(device));
-    uint8_t* buf = reinterpret_cast<uint8_t*>(padded_data_keepalive.data_ptr());
-
-    for (size_t i = 0; i < num_tensors; ++i) {
-      uint8_t* expert_ptr = buf + i * per_expert_bytes;
-      at::Tensor padded_view;
-      if (rowwise) {
-        padded_view = at::from_blob(expert_ptr, {padded_dim0, dim1},
-                                    {dim1 * elem_size, elem_size},
-                                    at::TensorOptions().dtype(data_tensors[i].dtype())
-                                        .device(device));
-      } else {
-        padded_view = at::from_blob(expert_ptr, {padded_dim0, dim1},
-                                    {elem_size, padded_dim0 * elem_size},
-                                    at::TensorOptions().dtype(data_tensors[i].dtype())
-                                        .device(device));
-      }
-      padded_view.narrow(0, 0, orig_dim0).copy_(data_tensors[i]);
-      data_host_ptrs[i] = reinterpret_cast<uintptr_t>(expert_ptr);
-    }
-  } else {
-    padded_data_keepalive =
-        at::empty({0}, at::TensorOptions().dtype(at::kByte).device(device));
-    for (size_t i = 0; i < num_tensors; ++i) {
-      data_host_ptrs[i] = reinterpret_cast<uintptr_t>(data_tensors[i].data_ptr());
-    }
+  for (size_t i = 0; i < num_tensors; ++i) {
+    data_host_ptrs[i] = reinterpret_cast<uintptr_t>(data_tensors[i].data_ptr());
   }
 
   // Swizzle scales and collect scale pointers
@@ -122,21 +78,64 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> get_device_pointer_fo
   if (swizzle) {
     NVTEScalingMode scaling_mode;
     transformer_engine::DType scale_dtype;
+    int64_t sf_vec_size;
     if (is_fp8_dtype(data_dtype)) {
       scaling_mode = NVTE_MXFP8_1D_SCALING;
       scale_dtype = transformer_engine::DType::kFloat8E8M0;
+      sf_vec_size = 32;
     } else if (is_fp4_dtype(data_dtype)) {
       scaling_mode = NVTE_NVFP4_1D_SCALING;
       scale_dtype = transformer_engine::DType::kFloat8E4M3;
+      sf_vec_size = 16;
     } else {
       NVTE_ERROR("data_dtype must be an FP8 or FP4 type for swizzling.");
+    }
+
+    // The cuDNN TMA descriptor for SFB uses tile_atom_to_shape_SF which
+    // preserves the full BlockScaledBasicChunk atom strides regardless of
+    // the actual N/K values.  The atom spans 128 rows and sf_vec_size*4
+    // columns in data space.  If either data dimension is smaller, the
+    // scale entries still sit at non-contiguous positions within that
+    // full-atom-sized buffer.  We therefore pad the scale tensors (NOT the
+    // data) to the full atom extent so the swizzle writes values at the
+    // byte offsets the TMA descriptor expects.
+    constexpr int64_t kAtomDim0 = 128;  // 32 * 4
+    const int64_t atom_dim1 = sf_vec_size * 4;
+    const int64_t padded_dim0 = ((dim0 + kAtomDim0 - 1) / kAtomDim0) * kAtomDim0;
+    const int64_t padded_dim1 = ((dim1 + atom_dim1 - 1) / atom_dim1) * atom_dim1;
+    const bool needs_scale_padding = (padded_dim0 != dim0 || padded_dim1 != dim1);
+
+    NVTEShape data_shape{};
+    data_shape.ndim = 2;
+    data_shape.data[0] = static_cast<size_t>(needs_scale_padding ? padded_dim0 : dim0);
+    data_shape.data[1] = static_cast<size_t>(needs_scale_padding ? padded_dim1 : dim1);
+
+    // Optionally pad scale tensors to match the full atom extent.
+    std::vector<at::Tensor> padded_scale_storage;
+    const auto& scales_to_use = needs_scale_padding ? padded_scale_storage : scale_tensors;
+    if (needs_scale_padding) {
+      padded_scale_storage.reserve(num_tensors);
+      for (size_t i = 0; i < num_tensors; ++i) {
+        const auto& orig = scale_tensors[i];
+        int64_t ps0, ps1;
+        if (rowwise) {
+          ps0 = padded_dim0;
+          ps1 = padded_dim1 / sf_vec_size;
+        } else {
+          ps0 = padded_dim0 / sf_vec_size;
+          ps1 = padded_dim1;
+        }
+        auto padded = at::zeros({ps0, ps1}, orig.options());
+        padded.narrow(0, 0, orig.size(0)).narrow(1, 0, orig.size(1)).copy_(orig);
+        padded_scale_storage.push_back(std::move(padded));
+      }
     }
 
     // Compute output buffer size for swizzled scales (16B aligned per tensor)
     std::vector<size_t> output_offsets;
     size_t output_bytes = 0;
     for (size_t i = 0; i < num_tensors; ++i) {
-      const size_t scale_numel = static_cast<size_t>(scale_tensors[i].numel());
+      const size_t scale_numel = static_cast<size_t>(scales_to_use[i].numel());
       const size_t dtype_bits = transformer_engine::pytorch::typeToNumBits(scale_dtype);
       output_bytes = roundup(output_bytes, 16);
       output_offsets.push_back(output_bytes);
@@ -159,8 +158,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> get_device_pointer_fo
       auto& output_nvte = outputs_nvte.back();
       output_nvte.set_with_gemm_swizzled_scales(true);
 
-      NVTEShape scale_shape = convertTorchShape(scale_tensors[i].sizes());
-      void* scale_ptr = scale_tensors[i].data_ptr();
+      NVTEShape scale_shape = convertTorchShape(scales_to_use[i].sizes());
+      void* scale_ptr = scales_to_use[i].data_ptr();
       uint8_t* out_scale_ptr = output_dptr + output_offsets[i];
 
       if (rowwise) {
@@ -201,8 +200,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> get_device_pointer_fo
   auto data_ptrs = collect_pointers_in_device_tensor(data_host_ptrs, device, stream);
   auto scale_ptrs = collect_pointers_in_device_tensor(scale_host_ptrs, device, stream);
 
-  return {std::move(data_ptrs), std::move(scale_ptrs), std::move(swizzled_scales_keepalive),
-          std::move(padded_data_keepalive)};
+  return {std::move(data_ptrs), std::move(scale_ptrs), std::move(swizzled_scales_keepalive)};
 }
 
 }  // namespace transformer_engine::pytorch

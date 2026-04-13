@@ -373,23 +373,16 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             fc1_glu_kwargs["b_tensor"] = fc1_w_data
             fc1_glu_kwargs["sfb_tensor"] = fc1_w_scales
         else:
-            # Discrete-weight kernel: per-expert data/scale pointers.
-            # Pad B first dim to a multiple of 128 so cuDNN's tile_atom_to_shape_SF
-            # produces a full BlockScaledBasicChunk atom layout.
-            fc1_b_ptrs, fc1_sfb_ptrs, _fc1_sw, _fc1_dpad = (
-                tex.get_device_pointer_for_data_and_scales(
-                    [w._rowwise_data for w in grouped_fc1_weight],
-                    [w._rowwise_scale_inv for w in grouped_fc1_weight],
-                    swizzle=True,
-                    rowwise=True,
-                    data_dtype=grouped_fc1_weight[0]._fp8_dtype,
-                    pad_data_to_multiple=128,
-                )
+            fc1_b_ptrs, fc1_sfb_ptrs, _fc1_sw = tex.get_device_pointer_for_data_and_scales(
+                [w._rowwise_data for w in grouped_fc1_weight],
+                [w._rowwise_scale_inv for w in grouped_fc1_weight],
+                swizzle=True,
+                rowwise=True,
+                data_dtype=grouped_fc1_weight[0]._fp8_dtype,
             )
-            fc1_padded_n = ((fc1_weight_shape[0] + 127) // 128) * 128
             fc1_glu_kwargs["b_ptrs"] = fc1_b_ptrs
             fc1_glu_kwargs["sfb_ptrs"] = fc1_sfb_ptrs
-            fc1_glu_kwargs["n"] = fc1_padded_n
+            fc1_glu_kwargs["n"] = fc1_weight_shape[0]
             fc1_glu_kwargs["b_dtype"] = torch.float8_e4m3fn
             fc1_glu_kwargs["b_major"] = "k"
 
@@ -452,8 +445,6 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         if self.is_fc2_bias_supported():
             fc2_quant_kwargs["bias_tensor"] = fc2_bias_packed
 
-        fc2_needs_n_slice = False
-        fc2_needs_n_slice = False
         if fc2_op.single_grouped_weight:
             # Clone and swizzle scales for GEMM (original stays unmodified for save_for_backward)
             fc2_weight_for_gemm = grouped_fc2_weight.copy()
@@ -477,29 +468,21 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             fc2_quant_kwargs["b_tensor"] = fc2_w_data
             fc2_quant_kwargs["sfb_tensor"] = fc2_w_scales
         else:
-            fc2_padded_n = ((fc2_weight_shape[0] + 127) // 128) * 128
-            fc2_needs_n_slice = fc2_padded_n != fc2_weight_shape[0]
-            fc2_b_ptrs, fc2_sfb_ptrs, _fc2_sw, _fc2_dpad = (
-                tex.get_device_pointer_for_data_and_scales(
-                    [w._rowwise_data for w in grouped_fc2_weight],
-                    [w._rowwise_scale_inv for w in grouped_fc2_weight],
-                    swizzle=True,
-                    rowwise=True,
-                    data_dtype=grouped_fc2_weight[0]._fp8_dtype,
-                    pad_data_to_multiple=128,
-                )
+            fc2_b_ptrs, fc2_sfb_ptrs, _fc2_sw = tex.get_device_pointer_for_data_and_scales(
+                [w._rowwise_data for w in grouped_fc2_weight],
+                [w._rowwise_scale_inv for w in grouped_fc2_weight],
+                swizzle=True,
+                rowwise=True,
+                data_dtype=grouped_fc2_weight[0]._fp8_dtype,
             )
             fc2_quant_kwargs["b_ptrs"] = fc2_b_ptrs
             fc2_quant_kwargs["sfb_ptrs"] = fc2_sfb_ptrs
-            fc2_quant_kwargs["n"] = fc2_padded_n
+            fc2_quant_kwargs["n"] = fc2_weight_shape[0]
             fc2_quant_kwargs["b_dtype"] = torch.float8_e4m3fn
             fc2_quant_kwargs["b_major"] = "k"
 
         fc2_kernel_out = self.grouped_gemm_quant_kernel()(**fc2_quant_kwargs)
-        fc2_d_tensor = fc2_kernel_out["d_tensor"]
-        if fc2_needs_n_slice:
-            fc2_d_tensor = fc2_d_tensor[:, :fc2_weight_shape[0], :]
-        fc2_out = fc2_d_tensor.permute(2, 0, 1).view(fc2_out_shape).contiguous()
+        fc2_out = fc2_kernel_out["d_tensor"].permute(2, 0, 1).view(fc2_out_shape).contiguous()
 
         # Save state for backward pass
         if requires_grad:
