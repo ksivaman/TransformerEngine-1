@@ -31,6 +31,21 @@ from .._common import (
 )
 
 
+def _zero_mxfp8_scale_padding(scale_inv: torch.Tensor, k_dim: int) -> None:
+    """Zero padding K-blocks in an MXFP8 scale_inv tensor.
+
+    MXFP8 scale tensors are shaped (M_padded, round_up(ceil(K/32), 4)).
+    When ceil(K/32) is not a multiple of 4, the padding columns may contain
+    uninitialized bytes. A 0xFF byte in E8M0 format is NaN and will propagate
+    through the GEMM kernel even when multiplied by zero-padded data.
+    """
+    k_blocks_valid = (k_dim + MXFP8_BLOCK_SCALING_SIZE - 1) // MXFP8_BLOCK_SCALING_SIZE
+    scale_bytes = scale_inv.view(dtype=torch.uint8)
+    k_blocks_total = scale_bytes.shape[-1]
+    if k_blocks_valid < k_blocks_total:
+        scale_bytes[..., k_blocks_valid:] = 0
+
+
 def _pack_grouped_linear_bias_for_cudnn(linear_op: GroupedLinear) -> Optional[torch.Tensor]:
     """Bias layout expected by cuDNN grouped GEMM: shape (n, num_groups), stride (1, n)."""
     if not linear_op.has_bias:
@@ -387,6 +402,8 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             fc1_glu_kwargs["b_dtype"] = torch.float8_e4m3fn
             fc1_glu_kwargs["b_major"] = "k"
 
+        _zero_mxfp8_scale_padding(grouped_fc1_x.scale_inv, in_shape[1])
+
         fc1_kernel_out = self.grouped_gemm_glu_kernel()(**fc1_glu_kwargs)
 
         # Unpack kernel outputs
@@ -489,6 +506,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             fc2_quant_kwargs["b_major"] = "k"
 
         fc2_kernel_out = self.grouped_gemm_quant_kernel()(**fc2_quant_kwargs)
+
         fc2_out = fc2_kernel_out["d_tensor"].permute(2, 0, 1).view(fc2_out_shape).contiguous()
 
         # Save state for backward pass

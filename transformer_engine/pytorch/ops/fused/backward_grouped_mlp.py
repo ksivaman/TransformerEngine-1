@@ -33,6 +33,7 @@ from .._common import (
 from ...cpp_extensions import general_grouped_gemm_for_grouped_tensor
 from ...module.base import _2X_ACC_WGRAD
 from ...triton.grouped_dbias_dscales import _compute_grouped_dbias_dscales
+from .forward_grouped_mlp import _zero_mxfp8_scale_padding
 
 
 def _cudnn_compute_wgrad(
@@ -482,6 +483,8 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
                     num_groups,
                     split_sizes,
                 )
+
+        _zero_mxfp8_scale_padding(grouped_fc2_dy.scale_inv, out_shape[1])
 
         # Pack data tensors
         # Note: Fused kernel expects tensor with non-contiguous
