@@ -169,9 +169,13 @@ __device__ __forceinline__ void process_colwise_stage(
 
     const e8m0_t biased_exponent =
         ptx::float_to_e8m0(thread_amax * Quantized_Limits<OType>::max_norm_rcp);
-    if (colwise_scale_is_within_bounds) {
-      scales_colwise[scale_idx] = biased_exponent;
-    }
+    // Note: Threads with `tid_X_colwise >= cols` correspond to padded scale columns inside the
+    // current chunk. We still need to write deterministic bytes to those positions because the
+    // scale buffer is allocated with `at::empty`/`torch.empty` (uninitialized). Writing 0 here
+    // ensures downstream GEMMs see e8m0=0 (a finite scale) rather than uninitialized 0xFF
+    // (which decodes to NaN in e8m0 and corrupts the matmul output).
+    scales_colwise[scale_idx] =
+        colwise_scale_is_within_bounds ? biased_exponent : static_cast<e8m0_t>(0);
 
     const bf16 block_scale_inverse = ptx::exp2f_rcp<bf16>(biased_exponent);
     const ptx::bf16x2 block_scale_inverse_bf16_x2 = {block_scale_inverse, block_scale_inverse};
@@ -241,9 +245,10 @@ __device__ __forceinline__ void process_colwise_stage(
 
     const e8m0_t biased_exponent =
         ptx::float_to_e8m0(thread_amax * Quantized_Limits<OType>::max_norm_rcp);
-    if (colwise_scale_is_within_bounds) {
-      scales_colwise[scale_idx] = biased_exponent;
-    }
+    // See note above (BF16_CAST_ONLY branch) on why we zero-fill OOB padded columns instead of
+    // skipping the write.
+    scales_colwise[scale_idx] =
+        colwise_scale_is_within_bounds ? biased_exponent : static_cast<e8m0_t>(0);
 
     const float block_scale_inverse = ptx::exp2f_rcp<float>(biased_exponent);
 #pragma unroll
@@ -402,9 +407,12 @@ __device__ __forceinline__ void process_rowwise_stage(
   } else {
     scale_idx = stage_scales_offset_Y * scale_stride_rowwise + stage_scales_offset_X;
   }
-  if (rowwise_scale_is_within_bounds) {
-    scales_rowwise[scale_idx] = biased_exponent;
-  }
+  // Threads whose scale column lies in the padded region (i.e. `scales_offset_X_rowwise * 32 >=
+  // cols`) still hold a valid `scale_idx` inside the padded scale buffer. We write 0 instead of
+  // skipping so the padding contains deterministic bytes; otherwise the buffer is allocated with
+  // `at::empty`/`torch.empty` and downstream GEMMs may consume uninitialized 0xFF e8m0 NaNs.
+  scales_rowwise[scale_idx] =
+      rowwise_scale_is_within_bounds ? biased_exponent : static_cast<e8m0_t>(0);
 
   const bf16 block_scale_inverse_bf16 = ptx::exp2f_rcp<bf16>(biased_exponent);
   const ptx::bf16x2 block_scale_inverse_bf16_x2 = {block_scale_inverse_bf16,
