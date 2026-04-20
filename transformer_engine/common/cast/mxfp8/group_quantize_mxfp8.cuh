@@ -109,11 +109,28 @@ __device__ __forceinline__ void process_colwise_stage(
   const size_t global_scales_offset_Y = scales_offset_Y_colwise + stage;
   const size_t global_scales_offset_X = scales_offset_X_colwise;
 
+  // Threads with tid_X_colwise >= cols load garbage from shared memory (the input chunk is only
+  // populated for cols < CHUNK_DIM_X) and must NOT write to the columnwise scale buffer. The
+  // buffer is allocated with cols padded up to scale_tensor_alignment_X_colwise (128) and the
+  // padding region must remain zero so the downstream cuDNN GEMM does not consume garbage scales
+  // for the padded rows (which correspond to the M-padding of A=DY^T or B=X). For example, with
+  // cols=64 and CHUNK_DIM_X=128, threads tid_X=64..127 would otherwise overwrite zero-padding.
+  const bool colwise_scale_is_within_bounds = global_scales_offset_X < cols;
+
   size_t scale_idx = 0;
   if constexpr (WITH_GEMM_SWIZZLED_SCALES) {
     const size_t tensor_base_row = tensor_base_for_scales / cols;
     const size_t tensor_scales_offset_Y_base = tensor_base_row / SCALE_DIM_Y;
-    const size_t tensor_scales_offset_colwise_base = tensor_base_for_scales / SCALE_DIM_Y;
+    // The columnwise swizzled scale buffer is allocated with the K dimension padded up to
+    // scale_tensor_alignment_X_colwise (128). The per-group base offset into this buffer must
+    // therefore be computed using the *padded* col count, not the logical `cols`. Using `cols`
+    // directly (i.e. `tensor_base_for_scales / SCALE_DIM_Y`) produces an under-counted base when
+    // `cols` is not a multiple of 128, causing adjacent groups to overlap in the buffer and
+    // overwrite each other's scales (e.g. K=64 yields base=cumulative_rows*2 instead of *4).
+    const size_t cols_padded =
+        DIVUP(cols, static_cast<size_t>(scale_tensor_alignment_X_colwise)) *
+        static_cast<size_t>(scale_tensor_alignment_X_colwise);
+    const size_t tensor_scales_offset_colwise_base = tensor_base_row * cols_padded / SCALE_DIM_Y;
     const size_t local_scales_offset_Y = global_scales_offset_Y - tensor_scales_offset_Y_base;
     scale_idx = tensor_scales_offset_colwise_base +
                 transformer_engine::dispatch::mxfp8::swizzle::gemm_swizzled_scale_idx(
@@ -164,7 +181,9 @@ __device__ __forceinline__ void process_colwise_stage(
 
     const e8m0_t biased_exponent =
         ptx::float_to_e8m0(thread_amax * Quantized_Limits<OType>::max_norm_rcp);
-    scales_colwise[scale_idx] = biased_exponent;
+    if (colwise_scale_is_within_bounds) {
+      scales_colwise[scale_idx] = biased_exponent;
+    }
 
     const bf16 block_scale_inverse = ptx::exp2f_rcp<bf16>(biased_exponent);
     const ptx::bf16x2 block_scale_inverse_bf16_x2 = {block_scale_inverse, block_scale_inverse};
@@ -234,7 +253,9 @@ __device__ __forceinline__ void process_colwise_stage(
 
     const e8m0_t biased_exponent =
         ptx::float_to_e8m0(thread_amax * Quantized_Limits<OType>::max_norm_rcp);
-    scales_colwise[scale_idx] = biased_exponent;
+    if (colwise_scale_is_within_bounds) {
+      scales_colwise[scale_idx] = biased_exponent;
+    }
 
     const float block_scale_inverse = ptx::exp2f_rcp<float>(biased_exponent);
 #pragma unroll

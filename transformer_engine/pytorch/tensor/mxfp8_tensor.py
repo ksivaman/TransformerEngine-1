@@ -118,12 +118,16 @@ class MXFP8Quantizer(Quantizer):
             f" {MXFP8_BLOCK_SCALING_SIZE}"
         )
 
-        # Allocate FP8 data
+        # Note: scale_inv is zero-initialized because the MXFP8 quantize kernels only write to
+        # scale positions within the logical tensor bounds. When the buffer is padded (e.g., a K
+        # not divisible by 128 gives padded scale columns), the padding must be zero so that
+        # downstream GEMMs do not consume uninitialized bytes. A stale byte equal to 0xFF in e8m0
+        # format decodes to NaN and corrupts the matmul output.
         data = None
         scale_inv = None
         if self.rowwise_usage:
             data = torch.empty(shape, dtype=torch.uint8, device=device, pin_memory=pin_memory)
-            scale_inv = torch.empty(
+            scale_inv = torch.zeros(
                 round_up_to_nearest_multiple(math.prod(shape[:-1]), 128),
                 round_up_to_nearest_multiple(shape[-1] // MXFP8_BLOCK_SCALING_SIZE, 4),
                 dtype=torch.uint8,
@@ -138,7 +142,7 @@ class MXFP8Quantizer(Quantizer):
             columnwise_data = torch.empty(
                 shape, dtype=torch.uint8, device=device, pin_memory=pin_memory
             )
-            columnwise_scale_inv = torch.empty(
+            columnwise_scale_inv = torch.zeros(
                 round_up_to_nearest_multiple(math.prod(shape[:-1]) // MXFP8_BLOCK_SCALING_SIZE, 4),
                 round_up_to_nearest_multiple(shape[-1], 128),
                 dtype=torch.uint8,

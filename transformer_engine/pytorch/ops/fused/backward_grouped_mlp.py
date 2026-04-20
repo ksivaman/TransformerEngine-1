@@ -63,10 +63,18 @@ def _cudnn_compute_wgrad(
     # b_tensor = X = (total_tokens, in_features) column-major
     b_tensor = grouped_x.columnwise_data.view(dtype=fp8_dtype).view(total_tokens, in_features)
 
-    sfa_tensor = grouped_dy.columnwise_scale_inv.view(out_features, -1).view(
+    # The cuDNN wgrad kernel expects scale tensors with shape
+    # (round_up(m_or_n, 128), scale_cols). The MXFP8 columnwise scale buffer is allocated with
+    # shape (round_up(total_tokens / 32, 4), round_up(K_logical, 128)) where K_logical equals
+    # out_features (for sfa) or in_features (for sfb), so we must view with the leading dim
+    # rounded up to a multiple of 128. When out_features / in_features are already multiples of
+    # 128, this is a no-op; for hidden sizes such as 64 it is required for correctness.
+    sfa_leading_dim = ((out_features + 127) // 128) * 128
+    sfb_leading_dim = ((in_features + 127) // 128) * 128
+    sfa_tensor = grouped_dy.columnwise_scale_inv.view(sfa_leading_dim, -1).view(
         dtype=torch.float8_e8m0fnu
     )
-    sfb_tensor = grouped_x.columnwise_scale_inv.view(in_features, -1).view(
+    sfb_tensor = grouped_x.columnwise_scale_inv.view(sfb_leading_dim, -1).view(
         dtype=torch.float8_e8m0fnu
     )
 
