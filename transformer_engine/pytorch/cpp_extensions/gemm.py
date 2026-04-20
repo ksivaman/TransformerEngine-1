@@ -293,6 +293,18 @@ def get_grouped_gemm_setup_workspace_size(num_tensors: int) -> int:
     return tex.get_grouped_gemm_setup_workspace_size(num_tensors)
 
 
+@functools.lru_cache(maxsize=None)
+def _get_fp32_ones_tensor(num_tensors: int, device: torch.device) -> torch.Tensor:
+    """Cached ones tensor."""
+    return torch.ones(num_tensors, dtype=torch.float32, device=device)
+
+
+@functools.lru_cache(maxsize=None)
+def _get_fp32_zeros_tensor(num_tensors: int, device: torch.device) -> torch.Tensor:
+    """Cached zeros tensor."""
+    return torch.zeros(num_tensors, dtype=torch.float32, device=device)
+
+
 def general_grouped_gemm_for_grouped_tensor(
     A,
     B,
@@ -350,12 +362,12 @@ def general_grouped_gemm_for_grouped_tensor(
     num_alphabeta = num_tensors if per_group else 1
 
     if alpha is None:
-        alpha = torch.ones(num_alphabeta, dtype=torch.float32, device=device)
+        alpha = _get_fp32_ones_tensor(num_alphabeta, device)
     if beta is None:
         if accumulate:
-            beta = torch.ones(num_alphabeta, dtype=torch.float32, device=device)
+            beta = _get_fp32_ones_tensor(num_alphabeta, device)
         else:
-            beta = torch.zeros(num_alphabeta, dtype=torch.float32, device=device)
+            beta = _get_fp32_zeros_tensor(num_alphabeta, device)
 
     if not alpha.is_cuda or not beta.is_cuda:
         raise ValueError("alpha and beta must be CUDA tensors.")
