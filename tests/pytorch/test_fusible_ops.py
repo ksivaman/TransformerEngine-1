@@ -3325,7 +3325,7 @@ class TestSequentialModules:
     @pytest.mark.parametrize("accumulate_into_main_grad", (False, True))
     @pytest.mark.parametrize("glu_interleave_size", (None, 32))
     @pytest.mark.parametrize("delay_wgrad_compute", (False, True))
-    @pytest.mark.parametrize("hidden_size", (128, 256))
+    @pytest.mark.parametrize("hidden_size", (64, 256))
     @pytest.mark.parametrize("activation", ("scaled_swiglu", "scaled_clamped_qgeglu"))
     def test_grouped_mlp(
         self,
