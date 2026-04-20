@@ -845,6 +845,44 @@ __forceinline__ __device__ int64_t compute_grouped_tensor_offset(const TensorSha
   }
 }
 
+// Device helper: compute the per-tensor byte offset into the MXFP8 swizzled scale buffer.
+//
+// MXFP8 scale buffers produced by the grouped quantize kernel
+// (group_quantize_mxfp8.cuh::process_colwise_stage) lay out per-group scale regions
+// back-to-back, with each region padded to the swizzled GEMM-ready shape:
+//
+//   per-group bytes = round_up(first_j, 128) * round_up(last_j, 128) / SCALE_DIM
+//
+// where SCALE_DIM = 32. For the typical MoE wgrad case (uniform K across groups,
+// per-group M = first_dims[j]), this matches the
+// `tensor_base_row * cols_padded / SCALE_DIM_Y` per-group base used by the writer.
+//
+// The naive `data_offset / SCALE_DIM` formula (= cumulative_M * K / 32) only matches
+// when K is already a multiple of 128. For K not aligned to 128 (e.g. hidden_size=64
+// where the buffer pads K to 128), the unpadded formula under-counts the per-group
+// stride, causing cuBLAS to read scales for the wrong group.
+__forceinline__ __device__ int64_t compute_grouped_mxfp8_swizzled_scale_byte_offset(
+    const TensorShapeInfo &meta, size_t idx) {
+  constexpr int64_t kScalePadAlign = 128;
+  constexpr int64_t kScaleDim = 32;
+  if (meta.first_dims == nullptr && meta.last_dims == nullptr) {
+    const int64_t f_padded =
+        ((meta.uniform_first + kScalePadAlign - 1) / kScalePadAlign) * kScalePadAlign;
+    const int64_t l_padded =
+        ((meta.uniform_last + kScalePadAlign - 1) / kScalePadAlign) * kScalePadAlign;
+    return static_cast<int64_t>(idx) * f_padded * l_padded / kScaleDim;
+  }
+  int64_t cumsum = 0;
+  for (size_t i = 0; i < idx; i++) {
+    const int64_t f = meta.first_dims ? meta.first_dims[i] : meta.uniform_first;
+    const int64_t l = meta.last_dims ? meta.last_dims[i] : meta.uniform_last;
+    const int64_t f_padded = ((f + kScalePadAlign - 1) / kScalePadAlign) * kScalePadAlign;
+    const int64_t l_padded = ((l + kScalePadAlign - 1) / kScalePadAlign) * kScalePadAlign;
+    cumsum += f_padded * l_padded / kScaleDim;
+  }
+  return cumsum;
+}
+
 // Kernel that performs bias addition to the Grouped GEMM output tensors.
 // Bias itself is a grouped tensor with the collections of same number of tensors
 // as the output tensors.
@@ -960,12 +998,21 @@ __global__ void setup_grouped_gemm_kernel(
 
   // Fill scale pointers (per-matrix).
   // The interpretation of the scale buffers depends on the shared scaling recipe:
-  //   NVTE_MXFP8_1D_SCALING : E8M0 byte stream; offset = data_offset / 32 elements
+  //   NVTE_MXFP8_1D_SCALING : E8M0 byte stream; per-group region is padded for the
+  //                           swizzled GEMM layout (each dim rounded up to 128 before
+  //                           dividing by SCALE_DIM=32). Computing the offset as
+  //                           data_offset/32 only matches the writer's layout when
+  //                           both per-group dims are multiples of 128; for other
+  //                           cases (e.g. hidden_size=64) the per-group region is
+  //                           larger than data_offset/32 would suggest and we must
+  //                           use the padded formula.
   //   otherwise             : one float per tensor, indexed by tensor index
   if (a_scale_base) {
     if (scaling_mode == NVTE_MXFP8_1D_SCALING) {
+      const int64_t a_scale_byte_offset =
+          compute_grouped_mxfp8_swizzled_scale_byte_offset(A_meta, idx);
       a_scale_inv_ptrs[idx] = reinterpret_cast<void *>(
-          static_cast<char *>(static_cast<void *>(a_scale_base)) + a_offset / 32);
+          static_cast<char *>(static_cast<void *>(a_scale_base)) + a_scale_byte_offset);
     } else {
       a_scale_inv_ptrs[idx] = static_cast<float *>(a_scale_base) + idx;
     }
@@ -974,8 +1021,10 @@ __global__ void setup_grouped_gemm_kernel(
   }
   if (b_scale_base) {
     if (scaling_mode == NVTE_MXFP8_1D_SCALING) {
+      const int64_t b_scale_byte_offset =
+          compute_grouped_mxfp8_swizzled_scale_byte_offset(B_meta, idx);
       b_scale_inv_ptrs[idx] = reinterpret_cast<void *>(
-          static_cast<char *>(static_cast<void *>(b_scale_base)) + b_offset / 32);
+          static_cast<char *>(static_cast<void *>(b_scale_base)) + b_scale_byte_offset);
     } else {
       b_scale_inv_ptrs[idx] = static_cast<float *>(b_scale_base) + idx;
     }
