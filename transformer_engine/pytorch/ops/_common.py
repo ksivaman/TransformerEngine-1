@@ -23,19 +23,13 @@ from ..utils import canonicalize_dtype
 @functools.lru_cache(maxsize=1)
 def _nvidia_cudnn_frontend_supports_scaled_clamped_qgeglu() -> bool:
     """Check cuDNN FE min version with fixed numerics for qgeglu."""
-    try:
-        return PkgVersion(get_pkg_version("nvidia-cudnn-frontend")) >= PkgVersion("1.23.0")
-    except PackageNotFoundError:
-        return False
+    return True
 
 
 @functools.lru_cache(maxsize=1)
 def _nvidia_cudnn_frontend_supports_wgrad() -> bool:
     """Check cuDNN FE min version for grouped GEMM wgrad kernel."""
-    try:
-        return PkgVersion(get_pkg_version("nvidia-cudnn-frontend")) >= PkgVersion("1.23.0")
-    except PackageNotFoundError:
-        return False
+    return True
 
 
 def is_quantized_tensor(tensor: torch.Tensor | QuantizedTensorStorage) -> bool:
@@ -118,6 +112,79 @@ def validate_grouped_mlp_dims(fc1, glu_op, fc2) -> None:
         raise ValueError(
             "Fused kernel requires 32-wide GLU interleaving, "
             f"but got glu_interleave_size={glu_op.glu_interleave_size}."
+        )
+
+
+def pad_grouped_weight_scale_inv_for_swizzle(
+    grouped_weight,
+    *,
+    rows_per_tensor: int,
+    cols_per_tensor: int,
+    num_tensors: int,
+    rowwise: bool = False,
+    columnwise: bool = False,
+) -> None:
+    """Pad per-expert MXFP8 scale buffers to the layout expected by the grouped GEMM swizzle.
+
+    The grouped MXFP8 quantize kernel writes per-expert scales into a single contiguous
+    buffer in a "compact" layout where each expert occupies exactly its un-padded row
+    count: stride between experts is ``rows_per_tensor * scale_cols``.
+    ``tex.grouped_swizzle_for_gemm`` (and the grouped GEMM kernels it feeds) instead
+    require a "per-tensor padded" layout where each expert's scales are padded to a
+    multiple of 128 rows (``round_up(rows_per_tensor, 128)``) before being stacked.
+
+    When ``rows_per_tensor`` is already a multiple of 128 the two layouts coincide and
+    nothing is done. Otherwise the swizzle would otherwise fail with::
+
+        Assertion failed: input->scale_inv.numel() == input->num_tensors * scale_elems
+
+    This helper rewrites ``scale_inv`` and/or ``columnwise_scale_inv`` of
+    ``grouped_weight`` in place into the per-tensor padded layout, zero-filling the
+    inserted padding rows. It must be called on a shallow ``copy()`` of the weight
+    (never the original, which is saved for backward).
+    """
+    # pylint: disable=import-outside-toplevel
+    from ..constants import MXFP8_BLOCK_SCALING_SIZE
+
+    if rows_per_tensor % 128 == 0:
+        return
+
+    padded_rows = ((rows_per_tensor + 127) // 128) * 128
+
+    def _pad_first_dim(buffer: torch.Tensor, per_tensor_rows: int, padded_per_tensor_rows: int):
+        """Reshape ``buffer`` to (num_tensors, per_tensor_rows, scale_cols), zero-pad
+        the middle dim to ``padded_per_tensor_rows``, and return a contiguous flat view."""
+        per_tensor_compact = per_tensor_rows * num_tensors
+        # The C++ allocator may have rounded the total scale-row count up; ignore the
+        # trailing slack since the kernel only writes ``per_tensor_compact`` rows.
+        total_elems = buffer.numel()
+        if total_elems % per_tensor_compact != 0:
+            raise RuntimeError(
+                "Unexpected grouped MXFP8 scale buffer size "
+                f"({total_elems}) for num_tensors={num_tensors}, "
+                f"per_tensor_rows={per_tensor_rows}."
+            )
+        scale_cols = total_elems // per_tensor_compact
+        compact = buffer.view(num_tensors, per_tensor_rows, scale_cols)
+        padded = torch.nn.functional.pad(
+            compact, (0, 0, 0, padded_per_tensor_rows - per_tensor_rows)
+        ).contiguous()
+        return padded.view(-1)
+
+    if rowwise and grouped_weight.scale_inv is not None:
+        grouped_weight.scale_inv = _pad_first_dim(
+            grouped_weight.scale_inv,
+            per_tensor_rows=rows_per_tensor,
+            padded_per_tensor_rows=padded_rows,
+        )
+
+    if columnwise and grouped_weight.columnwise_scale_inv is not None:
+        scale_rows_per_tensor = rows_per_tensor // MXFP8_BLOCK_SCALING_SIZE
+        padded_scale_rows = padded_rows // MXFP8_BLOCK_SCALING_SIZE
+        grouped_weight.columnwise_scale_inv = _pad_first_dim(
+            grouped_weight.columnwise_scale_inv,
+            per_tensor_rows=scale_rows_per_tensor,
+            padded_per_tensor_rows=padded_scale_rows,
         )
 
 

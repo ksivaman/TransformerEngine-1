@@ -27,6 +27,7 @@ from .._common import (
     fuse_grouped_mlp_ops,
     is_quantized_tensor,
     maybe_dequantize,
+    pad_grouped_weight_scale_inv_for_swizzle,
     validate_grouped_mlp_dims,
 )
 
@@ -344,6 +345,15 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         if fc1_op.single_grouped_weight:
             # Clone and swizzle scales for GEMM.
             fc1_weight_for_gemm = grouped_fc1_weight.copy()
+            # Re-pad per-expert MXFP8 scales to per-tensor padded layout when
+            # out_features is not a multiple of 128 (compact-vs-padded mismatch).
+            pad_grouped_weight_scale_inv_for_swizzle(
+                fc1_weight_for_gemm,
+                rows_per_tensor=fc1_weight_shape[0],
+                cols_per_tensor=fc1_weight_shape[1],
+                num_tensors=num_groups,
+                rowwise=True,
+            )
             tex.grouped_swizzle_for_gemm(fc1_weight_for_gemm, rowwise=True, columnwise=False)
 
             # Pack weight tensors for stacked kernel
@@ -449,6 +459,15 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         if fc2_op.single_grouped_weight:
             # Clone and swizzle scales for GEMM (original stays unmodified for save_for_backward)
             fc2_weight_for_gemm = grouped_fc2_weight.copy()
+            # Re-pad per-expert MXFP8 scales to per-tensor padded layout when
+            # out_features is not a multiple of 128 (compact-vs-padded mismatch).
+            pad_grouped_weight_scale_inv_for_swizzle(
+                fc2_weight_for_gemm,
+                rows_per_tensor=fc2_weight_shape[0],
+                cols_per_tensor=fc2_weight_shape[1],
+                num_tensors=num_groups,
+                rowwise=True,
+            )
             tex.grouped_swizzle_for_gemm(fc2_weight_for_gemm, rowwise=True, columnwise=False)
 
             fc2_w_data = fc2_weight_for_gemm.rowwise_data

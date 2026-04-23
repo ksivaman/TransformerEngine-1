@@ -28,6 +28,7 @@ from .._common import (
     _nvidia_cudnn_frontend_supports_wgrad,
     fuse_grouped_mlp_ops,
     maybe_dequantize,
+    pad_grouped_weight_scale_inv_for_swizzle,
     validate_grouped_mlp_dims,
 )
 from ...cpp_extensions import general_grouped_gemm_for_grouped_tensor
@@ -541,6 +542,15 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
         if fc2_op.single_grouped_weight:
             # Clone and swizzle scales for GEMM
             fc2_weight_for_gemm = grouped_fc2_weight.copy()
+            # Re-pad per-expert MXFP8 columnwise scales to per-tensor padded layout
+            # when out_features is not a multiple of 128.
+            pad_grouped_weight_scale_inv_for_swizzle(
+                fc2_weight_for_gemm,
+                rows_per_tensor=fc2_weight_shape[0],
+                cols_per_tensor=fc2_weight_shape[1],
+                num_tensors=num_groups,
+                columnwise=True,
+            )
             tex.grouped_swizzle_for_gemm(fc2_weight_for_gemm, rowwise=False, columnwise=True)
             # Pack weight tensors for stacked kernel
             # Data actual shape: (num_groups, k, n)
@@ -699,6 +709,15 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             if fc1_op.single_grouped_weight:
                 # Clone and swizzle scales for GEMM
                 fc1_weight_for_gemm = grouped_fc1_weight.copy()
+                # Re-pad per-expert MXFP8 columnwise scales to per-tensor padded layout
+                # when out_features is not a multiple of 128.
+                pad_grouped_weight_scale_inv_for_swizzle(
+                    fc1_weight_for_gemm,
+                    rows_per_tensor=fc1_weight_shape[0],
+                    cols_per_tensor=fc1_weight_shape[1],
+                    num_tensors=num_groups,
+                    columnwise=True,
+                )
                 tex.grouped_swizzle_for_gemm(fc1_weight_for_gemm, rowwise=False, columnwise=True)
 
                 fc1_w_data = fc1_weight_for_gemm.columnwise_data
