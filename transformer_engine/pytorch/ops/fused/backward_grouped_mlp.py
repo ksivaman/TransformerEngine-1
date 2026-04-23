@@ -125,7 +125,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         fc1_weight_shape = (fc1_op.out_features, fc1_op.in_features)
         fc2_weight_shape = (fc2_op.out_features, fc2_op.in_features)
         num_groups = fc1_op.num_groups
-        fc1_weight_param = fc1_op.weight if fc1_op.single_grouped_parameter else fc1_op.weight0
+        fc1_weight_param = fc1_op.weight if fc1_op.single_grouped_weight else fc1_op.weight0
         device = fc1_weight_param.device
         dtype = fc1_ctx.dtype
 
@@ -137,7 +137,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             saved_tensors[2:],
         )
 
-        if fc1_op.single_grouped_parameter:
+        if fc1_op.single_grouped_weight:
             grouped_fc1_weight, saved_tensors = saved_tensors[0], saved_tensors[1:]
         else:
             grouped_fc1_weight, saved_tensors = (
@@ -162,7 +162,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         # Saved tensors from FC2 forward
         saved_tensors = fc2_ctx.saved_tensors
         _, saved_tensors = saved_tensors[0], saved_tensors[1:]  # Assume same split sizes as FC1
-        if fc2_op.single_grouped_parameter:
+        if fc2_op.single_grouped_weight:
             grouped_fc2_weight, saved_tensors = saved_tensors[0], saved_tensors[1:]
         else:
             grouped_fc2_weight, saved_tensors = (
@@ -287,7 +287,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         #   4 (block row), k/128, num_groups)
         fc2_w_data = (
             grouped_fc2_weight.columnwise_data
-            if fc2_op.single_grouped_parameter
+            if fc2_op.single_grouped_weight
             else noop_cat([w._columnwise_data for w in grouped_fc2_weight])
         )
         fc2_w_data = fc2_w_data.view(dtype=data_dtype)
@@ -295,7 +295,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         fc2_w_data = fc2_w_data.permute(1, 2, 0) if use_nvfp4 else fc2_w_data.permute(2, 1, 0)
         fc2_w_scales = (
             grouped_fc2_weight.columnwise_scale_inv
-            if fc2_op.single_grouped_parameter
+            if fc2_op.single_grouped_weight
             else noop_cat([w._columnwise_scale_inv for w in grouped_fc2_weight])
         )
         fc2_w_scales = fc2_w_scales.view(dtype=scale_view_dtype)
@@ -395,7 +395,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         # FC2 wgrad GEMM
         fc2_packed_wgrad = None
         fc2_weight_grads: list[Optional[torch.Tensor]]
-        if fc2_op.single_grouped_parameter:
+        if fc2_op.single_grouped_weight:
             fc2_weight_grads = [None]
         else:
             fc2_weight_grads = [None] * num_groups
@@ -403,7 +403,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
 
             # Initialize grad buffers
             accumulate_into_main_grad = False
-            if fc2_op.single_grouped_parameter:
+            if fc2_op.single_grouped_weight:
                 grouped_fc2_wgrad = None
                 weight_param = fc2_op.weight
                 if fc2_op._accumulate_into_main_grad:
@@ -550,7 +550,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
         # FC1 wgrad GEMM
         fc1_packed_wgrad = None
         fc1_weight_grads: list[Optional[torch.Tensor]]
-        if fc1_op.single_grouped_parameter:
+        if fc1_op.single_grouped_weight:
             fc1_weight_grads = [None]
         else:
             fc1_weight_grads = [None] * num_groups
@@ -558,7 +558,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
 
             # Initialize grad buffers
             accumulate_into_main_grad = False
-            if fc1_op.single_grouped_parameter:
+            if fc1_op.single_grouped_weight:
                 grouped_fc1_wgrad = None
                 weight_param = fc1_op.weight
                 if fc1_op._accumulate_into_main_grad:
@@ -667,9 +667,9 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_BlockScaled(FusedOperation):
             )
 
         # Construct param grads in parameter registration order.
-        if fc1_op.single_grouped_parameter:
+        if fc1_op.single_grouped_weight:
             fc1_weight_grads = [fc1_packed_wgrad] if fc1_packed_wgrad is not None else [None]
-        if fc2_op.single_grouped_parameter:
+        if fc2_op.single_grouped_weight:
             fc2_weight_grads = [fc2_packed_wgrad] if fc2_packed_wgrad is not None else [None]
 
         return (

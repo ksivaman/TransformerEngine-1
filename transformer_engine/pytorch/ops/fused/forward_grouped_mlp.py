@@ -121,8 +121,8 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
         fc2_weight_shape = (fc2_op.out_features, fc2_op.in_features)
 
         num_groups = fc1_op.num_groups
-        fc1_weight_param = fc1_op.weight if fc1_op.single_grouped_parameter else fc1_op.weight0
-        fc2_weight_param = fc2_op.weight if fc2_op.single_grouped_parameter else fc2_op.weight0
+        fc1_weight_param = fc1_op.weight if fc1_op.single_grouped_weight else fc1_op.weight0
+        fc2_weight_param = fc2_op.weight if fc2_op.single_grouped_weight else fc2_op.weight0
         device = fc1_weight_param.device
         if torch.is_autocast_enabled():
             dtype = torch.get_autocast_dtype("cuda")
@@ -173,12 +173,12 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
 
         # Prepare FC1 grouped weight tensor for fused kernels.
         # Support both:
-        #  - single_grouped_parameter=True: op.weight is already a GroupedTensor
-        #  - single_grouped_parameter=False: pack per-group weights into a GroupedTensor
-        if fc1_op.single_grouped_parameter:
+        #  - single_grouped_weight=True: op.weight is already a GroupedTensor
+        #  - single_grouped_weight=False: pack per-group weights into a GroupedTensor
+        if fc1_op.single_grouped_weight:
             if not isinstance(fc1_op.weight, GroupedTensor):
                 raise RuntimeError(
-                    "FC1 expected GroupedTensor weight with single_grouped_parameter=True."
+                    "FC1 expected GroupedTensor weight with single_grouped_weight=True."
                 )
             if fc1_op.weight.quantizer is not None:
                 fc1_weight_quantizer.set_usage(rowwise=True, columnwise=input_requires_grad)
@@ -207,10 +207,10 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             grouped_fc1_weight = quantized_fc1_weights
 
         # Prepare FC2 grouped weight tensor for fused kernels.
-        if fc2_op.single_grouped_parameter:
+        if fc2_op.single_grouped_weight:
             if not isinstance(fc2_op.weight, GroupedTensor):
                 raise RuntimeError(
-                    "FC2 expected GroupedTensor weight with single_grouped_parameter=True."
+                    "FC2 expected GroupedTensor weight with single_grouped_weight=True."
                 )
             if fc2_op.weight.quantizer is not None:
                 fc2_weight_quantizer.set_usage(rowwise=True, columnwise=input_requires_grad)
@@ -316,7 +316,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
         #   4 (block col), k/128, num_groups)
         fc1_w_data = (
             grouped_fc1_weight.rowwise_data
-            if fc1_op.single_grouped_parameter
+            if fc1_op.single_grouped_weight
             else noop_cat([w._rowwise_data for w in grouped_fc1_weight])
         )
         fc1_w_data = fc1_w_data.view(dtype=data_dtype)
@@ -324,7 +324,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
         fc1_w_data = fc1_w_data.permute(1, 2, 0)
         fc1_w_scales = (
             grouped_fc1_weight.scale_inv
-            if fc1_op.single_grouped_parameter
+            if fc1_op.single_grouped_weight
             else noop_cat([w._rowwise_scale_inv for w in grouped_fc1_weight])
         )
         fc1_w_scales = fc1_w_scales.view(dtype=scale_view_dtype)
@@ -466,7 +466,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             else:
                 fc1_input_tensors = (None, None, None, None, None)
             # FC1
-            if fc1_op.single_grouped_parameter:
+            if fc1_op.single_grouped_weight:
                 fc1_ctx.save_for_backward(
                     split_sizes, split_points, grouped_fc1_weight, *fc1_input_tensors
                 )
@@ -507,7 +507,7 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_BlockScaled(FusedOperation):
             else:
                 fc2_input_tensors = (None, None, None, None, None)
 
-            if fc2_op.single_grouped_parameter:
+            if fc2_op.single_grouped_weight:
                 fc2_ctx.save_for_backward(split_sizes, grouped_fc2_weight, *fc2_input_tensors)
             else:
                 fc2_ctx.save_for_backward(split_sizes, *grouped_fc2_weight, *fc2_input_tensors)
