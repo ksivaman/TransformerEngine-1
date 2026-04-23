@@ -703,6 +703,8 @@ inline TensorShapeInfo create_shape_info(const transformer_engine::GroupedTensor
 inline GroupedOperandSelection select_grouped_operand(const transformer_engine::GroupedTensor *t,
                                                       bool trans, bool is_A) {
   using namespace transformer_engine;
+  const bool has_row = t->has_data();
+  const bool has_col = t->has_columnwise_data();
   const bool has_empty_logical_shape =
       t->logical_shape.ndim == 2 &&
       (t->logical_shape.data[0] == 0 || t->logical_shape.data[1] == 0);
@@ -735,14 +737,6 @@ inline GroupedOperandSelection select_grouped_operand(const transformer_engine::
   sel.trans = trans;
   sel.scaling_mode = sm;
   sel.with_gemm_swizzled_scales = t->with_gemm_swizzled_scales;
-
-  // Empty logical tensors may not allocate rowwise/columnwise buffers.
-  if (!has_row && !has_col && has_empty_logical_shape) {
-    sel.is_empty_logical_shape = true;
-    sel.dtype = t->dtype();
-    sel.shape = create_shape_info(t, /*swap_dims=*/false);
-    return sel;
-  }
 
   const DType rep_dtype = has_row ? row_dtype : col_dtype;
   const bool is_fp8 = is_fp8_dtype(rep_dtype);
