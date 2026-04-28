@@ -1344,4 +1344,3 @@ NVTEShape nvte_get_grouped_tensor_logical_shape(const NVTEGroupedTensor tensor) 
   const auto &t = *transformer_engine::convertNVTEGroupedTensorCheck(tensor);
   return t.logical_shape;
 }
-

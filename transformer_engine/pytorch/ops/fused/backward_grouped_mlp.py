@@ -48,16 +48,12 @@ def _pack_nvfp4_amax_list(tensors: list) -> None:
         return
     row_amaxes = [getattr(tensor, "_amax_rowwise", None) for tensor in tensors]
     if all(amax is not None for amax in row_amaxes):
-        packed_row_amax = torch.cat(
-            [amax.view(-1) for amax in row_amaxes], dim=0
-        ).contiguous()
+        packed_row_amax = torch.cat([amax.view(-1) for amax in row_amaxes], dim=0).contiguous()
         for idx, tensor in enumerate(tensors):
             tensor._amax_rowwise = packed_row_amax[idx : idx + 1]
     col_amaxes = [getattr(tensor, "_amax_columnwise", None) for tensor in tensors]
     if all(amax is not None for amax in col_amaxes):
-        packed_col_amax = torch.cat(
-            [amax.view(-1) for amax in col_amaxes], dim=0
-        ).contiguous()
+        packed_col_amax = torch.cat([amax.view(-1) for amax in col_amaxes], dim=0).contiguous()
         for idx, tensor in enumerate(tensors):
             tensor._amax_columnwise = packed_col_amax[idx : idx + 1]
 
@@ -520,7 +516,6 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
         # NVFP4 byte-packs the K dimension (two FP4 values per byte).
         data_dy_k = out_shape[1] // 2 if use_nvfp4 else out_shape[1]
         fc2_weight_k = fc2_weight_shape[1] // 2 if use_nvfp4 else fc2_weight_shape[1]
-        fc1_weight_k = fc1_weight_shape[1] // 2 if use_nvfp4 else fc1_weight_shape[1]
         # Number of FP4/FP8 values represented by one block scale along K.
         # For MXFP8: 4 * 32 = 128 (matches the 128-block tiling).
         # For NVFP4: 2 * 16 = 32 logical values = 16 byte-packed columns.
@@ -600,12 +595,8 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             fc2_w_data = fc2_w_data.view(num_groups, fc2_weight_shape[0], fc2_weight_k)
             # NVFP4 columnwise data is stored already transposed relative to
             # MXFP8, so we swap the M / K logical axes for the wrapper.
-            fc2_w_data = (
-                fc2_w_data.permute(1, 2, 0) if use_nvfp4 else fc2_w_data.permute(2, 1, 0)
-            )
-            fc2_w_scales = fc2_weight_for_gemm.columnwise_scale_inv.view(
-                dtype=scale_view_dtype
-            )
+            fc2_w_data = fc2_w_data.permute(1, 2, 0) if use_nvfp4 else fc2_w_data.permute(2, 1, 0)
+            fc2_w_scales = fc2_weight_for_gemm.columnwise_scale_inv.view(dtype=scale_view_dtype)
             fc2_w_scales = fc2_w_scales.view(
                 num_groups,
                 (fc2_weight_shape[1] + k_sf_divisor - 1) // k_sf_divisor,
@@ -630,11 +621,7 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
                 [w._columnwise_scale_inv for w in grouped_fc2_weight],
                 swizzle=True,
                 rowwise=False,
-                data_dtype=(
-                    data_dtype
-                    if use_nvfp4
-                    else grouped_fc2_weight[0]._fp8_dtype
-                ),
+                data_dtype=(data_dtype if use_nvfp4 else grouped_fc2_weight[0]._fp8_dtype),
             )
             fc2_dglu_kwargs["b_ptrs"] = fc2_b_ptrs
             fc2_dglu_kwargs["sfb_ptrs"] = fc2_sfb_ptrs
