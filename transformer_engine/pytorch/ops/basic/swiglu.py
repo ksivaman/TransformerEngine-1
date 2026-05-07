@@ -17,7 +17,7 @@ from ...utils import clear_tensor_data
 from ..op import BasicOperation, OperationContext
 from .._common import maybe_dequantize
 
-__all__ = ["SwiGLU", "ClampedSwiGLU", "ScaledSwiGLU", "ScaledClampedQGeGLU"]
+__all__ = ["SwiGLU", "ClampedSwiGLU", "ScaledSwiGLU", "ScaledClampedQGeGLU", "ScaledSReLU"]
 
 
 class SwiGLU(BasicOperation):
@@ -586,3 +586,109 @@ class ScaledClampedQGeGLU(_ScaledGLU):
             swiglu_in,
             None,
         )
+
+
+class ScaledSReLU(BasicOperation):
+    r"""Squared ReLU with post-scaling
+    (matches cuDNN grouped GEMM SReLU fused kernel).
+
+    Computes :math:`\text{SReLU}(x) * s` where :math:`\text{SReLU}(x) = \max(x, 0)^2`
+    and ``s`` is a per-row scaling tensor (extra input).
+
+    Unlike :class:`ScaledSwiGLU` / :class:`ScaledClampedQGeGLU`, the input is not
+    split along its last dimension, so the activation output has the same shape
+    as the input. Used as the middle op in a fused MoE grouped MLP triple
+    ``GroupedLinear -> ScaledSReLU -> GroupedLinear``.
+
+    """
+
+    num_extra_inputs: int = 1
+
+    def op_forward(self, *args, **kwargs) -> None:
+        raise RuntimeError(
+            f"{self.__class__.__name__} operation has "
+            f"{self.num_extra_inputs} extra tensor inputs "
+            f"and {self.num_extra_outputs} extra tensor outputs. "
+            "It overrides `fuser_forward` instead of `op_forward`."
+        )
+
+    def op_backward(self, *args, **kwargs) -> None:
+        raise RuntimeError(
+            f"{self.__class__.__name__} operation has "
+            f"{self.num_extra_inputs} extra tensor inputs "
+            f"and {self.num_extra_outputs} extra tensor outputs. "
+            "It overrides `fuser_backward` instead of `op_backward`."
+        )
+
+    def fuser_forward(
+        self,
+        basic_op_ctxs: list[OperationContext],
+        input_: torch.Tensor,
+        *,
+        basic_op_extra_inputs: list[tuple[torch.Tensor, ...]],
+        prev_op_grad_output_quantizer: Optional[Quantizer],
+        next_op_input_quantizer: Optional[Quantizer],
+        basic_op_kwargs: list[dict[str, Any]],
+    ) -> tuple[torch.Tensor, Iterable[Iterable[torch.Tensor]]]:
+        extra_input = basic_op_extra_inputs[0][0]
+
+        # Determine compute dtype
+        if torch.is_autocast_enabled():
+            dtype = torch.get_autocast_dtype("cuda")
+        elif isinstance(input_, torch.Tensor):
+            dtype = input_.dtype
+        else:
+            dtype = extra_input.dtype
+
+        input_ = maybe_dequantize(input_, dtype)
+        scales = maybe_dequantize(extra_input, dtype)
+
+        srelu_out = tex.srelu(input_, None)
+        out = srelu_out * scales.unsqueeze(-1)
+
+        # Save state for backward pass
+        ctx = basic_op_ctxs[0]
+        if ctx.requires_grad:
+            if is_cpu_offload_enabled():
+                mark_activation_offload(input_)
+            ctx.input_requires_grad = True
+            ctx.extra_input_requires_grad = extra_input.requires_grad
+            ctx.dtype = dtype
+            ctx.save_for_backward(
+                input_,
+                scales if ctx.input_requires_grad else None,
+            )
+
+        return out, [()]
+
+    def fuser_backward(
+        self,
+        basic_op_ctxs: list[OperationContext],
+        grad_output: torch.Tensor,
+        *,
+        basic_op_grad_extra_outputs: list[tuple[torch.Tensor, ...]],
+    ) -> tuple[
+        torch.Tensor,
+        Iterable[Iterable[Optional[torch.Tensor]]],
+        Iterable[Iterable[Optional[torch.Tensor]]],
+    ]:
+        ctx = basic_op_ctxs[0]
+        input_, scales = ctx.saved_tensors
+        input_ = maybe_dequantize(input_, ctx.dtype)
+        if scales is not None:
+            scales = maybe_dequantize(scales, ctx.dtype)
+        grad_output = maybe_dequantize(grad_output, ctx.dtype)
+
+        grad_input = None
+        if ctx.input_requires_grad:
+            grad_srelu_out = grad_output * scales.unsqueeze(-1)
+            grad_input = tex.dsrelu(grad_srelu_out, input_, None)
+
+        grad_extra_input = None
+        if ctx.extra_input_requires_grad:
+            srelu_out = tex.srelu(input_, None)
+            grad_extra_input = torch.linalg.vecdot(srelu_out, grad_output)
+
+        clear_tensor_data(ctx.saved_tensors[0])  # input_
+
+        return grad_input, [()], [(grad_extra_input,)]

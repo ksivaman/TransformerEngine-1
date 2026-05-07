@@ -18,7 +18,7 @@ from ...tensor.grouped_tensor import GroupedTensor
 from ...tensor.mxfp8_tensor import MXFP8Quantizer
 from ...utils import clear_tensor_data, get_cached_ones_tensor, get_device_compute_capability
 from ...constants import MXFP8_BLOCK_SCALING_SIZE
-from ..basic import GroupedLinear, ScaledClampedQGeGLU, ScaledSwiGLU
+from ..basic import GroupedLinear, ScaledClampedQGeGLU, ScaledSReLU, ScaledSwiGLU
 from ..fuser import register_backward_fusion
 from ..op import FusedOperation, FusibleOperation, OperationContext
 from .._common import (
@@ -311,11 +311,22 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             self.grouped_gemm_dglu_kernel()  # Try triggering import error
             raise RuntimeError(f"{self.__class__.__name__} is not supported on this system.")
         validate_grouped_mlp_dims(fc1, swiglu, fc2)
+        self._configure_act_op(swiglu)
+
+    def _configure_act_op(self, act_op) -> None:
+        """Configure activation-specific kernel state. Override in subclasses."""
         # The cuDNN dgeglu implementation corresponds to ScaledClampedQGeGLU.
         # The act_func string should be fixed on the cuDNN FE side.
         self._cudnn_dact_func: str = (
-            "dgeglu" if isinstance(swiglu, ScaledClampedQGeGLU) else "dswiglu"
+            "dgeglu" if isinstance(act_op, ScaledClampedQGeGLU) else "dswiglu"
         )
+
+    def _fc2_dact_kwargs(self, *, alpha_tensor: torch.Tensor) -> dict:
+        """Activation-specific kwargs for the FC2 fused dactivation kernel."""
+        return {
+            "beta_tensor": alpha_tensor,
+            "act_func": self._cudnn_dact_func,
+        }
 
     def fuser_backward(
         self,
@@ -456,7 +467,6 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             "sfa_tensor": fc2_dy_scales,
             "padded_offsets": split_points,
             "alpha_tensor": alpha_tensor,
-            "beta_tensor": alpha_tensor,
             "prob_tensor": scales_tensor,
             "dprob_tensor": dscales_tensor,
             "generate_dbias": fc1_op.has_bias,
@@ -466,8 +476,8 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             "sf_vec_size": MXFP8_BLOCK_SCALING_SIZE,
             "current_stream": current_stream,
             "discrete_col_sfd": True,
-            "act_func": self._cudnn_dact_func,
             "use_dynamic_sched": True,
+            **self._fc2_dact_kwargs(alpha_tensor=alpha_tensor),
         }
 
         if fc2_op.single_grouped_weight:
@@ -707,6 +717,45 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
         )
 
 
+class BackwardGroupedMLP_CuTeGEMMDSReLU_MXFP8(BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8):
+    """Fused op for MXFP8 GroupedLinear + ScaledSReLU + GroupedLinear (backward)
+
+    Uses experimental CuTe DSL kernel from cuDNN front-end.
+
+    """
+
+    @classmethod
+    @functools.lru_cache(maxsize=None)
+    def grouped_gemm_dglu_kernel(cls) -> Callable:
+        """Fused kernel for grouped GEMM, Squared ReLU activation backward, and scale grad."""
+        from cudnn import grouped_gemm_dsrelu_wrapper_sm100  # pylint: disable=no-name-in-module
+
+        return grouped_gemm_dsrelu_wrapper_sm100
+
+    def __init__(
+        self,
+        *,
+        fc1: GroupedLinear,
+        swiglu: ScaledSReLU,
+        fc2: GroupedLinear,
+    ) -> None:
+        # Bypass parent's GLU-specific init checks; reuse the rest.
+        FusedOperation.__init__(self, (fc1, swiglu, fc2))
+        if not self.is_supported():
+            self.grouped_gemm_dglu_kernel()  # Try triggering import error
+            raise RuntimeError(f"{self.__class__.__name__} is not supported on this system.")
+        validate_grouped_mlp_dims(fc1, swiglu, fc2)
+        self._configure_act_op(swiglu)
+
+    def _configure_act_op(self, act_op) -> None:
+        # SReLU has no act_func variant.
+        self._cudnn_dact_func = None  # unused
+
+    def _fc2_dact_kwargs(self, *, alpha_tensor: torch.Tensor) -> dict:
+        # The dSReLU wrapper does not accept ``act_func`` or ``beta_tensor``.
+        return {}
+
+
 def fuse_backward_ops(
     ops: list[FusibleOperation],
     *,
@@ -736,6 +785,24 @@ def fuse_backward_ops(
     )
 
 
+def fuse_backward_ops_srelu(
+    ops: list[FusibleOperation],
+    *,
+    recipe: Optional[Recipe] = None,
+    **unused,  # pylint: disable=unused-argument
+) -> list[FusibleOperation]:
+    """Apply SReLU grouped-MLP operation fusion for backward pass."""
+
+    return fuse_grouped_mlp_ops(
+        ops,
+        recipe=recipe,
+        fused_op_cls=BackwardGroupedMLP_CuTeGEMMDSReLU_MXFP8,
+        act_classes=(ScaledSReLU,),
+    )
+
+
 # Register fusion if available
 if BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8.is_supported():
     register_backward_fusion(fuse_backward_ops, prepend=True)
+if BackwardGroupedMLP_CuTeGEMMDSReLU_MXFP8.is_supported():
+    register_backward_fusion(fuse_backward_ops_srelu, prepend=True)

@@ -19,7 +19,7 @@ from ...utils import get_cached_ones_tensor, get_device_compute_capability, mark
 from ...tensor.grouped_tensor import GroupedTensor
 from ...tensor.mxfp8_tensor import MXFP8Quantizer
 from ...constants import MXFP8_BLOCK_SCALING_SIZE
-from ..basic import GroupedLinear, ScaledClampedQGeGLU, ScaledSwiGLU
+from ..basic import GroupedLinear, ScaledClampedQGeGLU, ScaledSReLU, ScaledSwiGLU
 from ..fuser import register_forward_fusion
 from ..op import FusedOperation, FusibleOperation, OperationContext
 from .._common import (
@@ -97,9 +97,17 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             self.grouped_gemm_glu_kernel()  # Try triggering import error
             raise RuntimeError(f"{self.__class__.__name__} is not supported on this system.")
         validate_grouped_mlp_dims(fc1, swiglu, fc2)
+        self._configure_act_op(swiglu)
+
+    def _configure_act_op(self, act_op) -> None:
+        """Configure activation-specific kernel state. Override in subclasses."""
         # The cuDNN geglu implementation corresponds to ScaledClampedQGeGLU.
         # The act_func string should be fixed on the cuDNN FE side.
-        self._cudnn_act_func: str = "geglu" if isinstance(swiglu, ScaledClampedQGeGLU) else "swiglu"
+        self._cudnn_act_func: str = "geglu" if isinstance(act_op, ScaledClampedQGeGLU) else "swiglu"
+
+    def _fc1_act_kwargs(self) -> dict[str, Any]:
+        """Activation-specific kwargs to pass to the FC1 fused activation kernel."""
+        return {"act_func": self._cudnn_act_func}
 
     def fuser_forward(
         self,
@@ -302,8 +310,8 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
             "sf_vec_size": MXFP8_BLOCK_SCALING_SIZE,
             "current_stream": current_stream,
             "discrete_col_sfd": True,
-            "act_func": self._cudnn_act_func,
             "use_dynamic_sched": True,
+            **self._fc1_act_kwargs(),
         }
 
         if fc1_op.single_grouped_weight:
@@ -520,6 +528,45 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         return fc2_out, [(), (), ()]
 
 
+class ForwardGroupedMLP_CuTeGEMMSReLU_MXFP8(ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8):
+    """Fused op for MXFP8 GroupedLinear + ScaledSReLU + GroupedLinear
+
+    Uses experimental CuTe DSL kernel from cuDNN front-end.
+
+    """
+
+    @classmethod
+    @functools.lru_cache(maxsize=None)
+    def grouped_gemm_glu_kernel(cls) -> Callable:
+        """Fused kernel for grouped GEMM + Squared ReLU activation + post-multiplication."""
+        from cudnn import grouped_gemm_srelu_wrapper_sm100  # pylint: disable=no-name-in-module
+
+        return grouped_gemm_srelu_wrapper_sm100
+
+    def __init__(
+        self,
+        *,
+        fc1: GroupedLinear,
+        swiglu: ScaledSReLU,
+        fc2: GroupedLinear,
+    ) -> None:
+        # Bypass parent's GLU-specific init checks; reuse the rest.
+        FusedOperation.__init__(self, (fc1, swiglu, fc2))
+        if not self.is_supported():
+            self.grouped_gemm_glu_kernel()  # Try triggering import error
+            raise RuntimeError(f"{self.__class__.__name__} is not supported on this system.")
+        validate_grouped_mlp_dims(fc1, swiglu, fc2)
+        self._configure_act_op(swiglu)
+
+    def _configure_act_op(self, act_op) -> None:
+        # SReLU has no act_func variant.
+        self._cudnn_act_func = None  # unused
+
+    def _fc1_act_kwargs(self) -> dict[str, Any]:
+        # The SReLU wrapper does not accept an ``act_func`` kwarg.
+        return {}
+
+
 def fuse_forward_ops(
     ops: list[FusibleOperation],
     *,
@@ -549,6 +596,24 @@ def fuse_forward_ops(
     )
 
 
+def fuse_forward_ops_srelu(
+    ops: list[FusibleOperation],
+    *,
+    recipe: Optional[Recipe] = None,
+    **unused,  # pylint: disable=unused-argument
+) -> list[FusibleOperation]:
+    """Apply SReLU grouped-MLP operation fusion for forward pass."""
+
+    return fuse_grouped_mlp_ops(
+        ops,
+        recipe=recipe,
+        fused_op_cls=ForwardGroupedMLP_CuTeGEMMSReLU_MXFP8,
+        act_classes=(ScaledSReLU,),
+    )
+
+
 # Register fusion if available
 if ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8.is_supported():
     register_forward_fusion(fuse_forward_ops, prepend=True)
+if ForwardGroupedMLP_CuTeGEMMSReLU_MXFP8.is_supported():
+    register_forward_fusion(fuse_forward_ops_srelu, prepend=True)

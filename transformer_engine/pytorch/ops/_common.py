@@ -182,8 +182,24 @@ def get_dummy_wgrads_for_params(
     return out
 
 
-def validate_grouped_mlp_dims(fc1, glu_op, fc2) -> None:
-    """Validate FC1 / scaled GLU / FC2 dimensions for fused grouped MLP."""
+def _is_glu_activation(act_op) -> bool:
+    """Whether ``act_op`` is a gated linear unit variant (GLU/GeGLU)."""
+    from .basic import (  # pylint: disable=import-outside-toplevel
+        ScaledClampedQGeGLU,
+        ScaledSwiGLU,
+    )
+
+    return isinstance(act_op, (ScaledSwiGLU, ScaledClampedQGeGLU))
+
+
+def validate_grouped_mlp_dims(fc1, act_op, fc2) -> None:
+    """Validate FC1 / scaled activation / FC2 dimensions for fused grouped MLP.
+
+    Supports both gated activations (``ScaledSwiGLU`` /
+    ``ScaledClampedQGeGLU``), where ``fc1.out_features == 2 * fc2.in_features``,
+    and non-gated activations (``ScaledSReLU``), where
+    ``fc1.out_features == fc2.in_features``.
+    """
 
     if fc1.in_features % 64 != 0 or fc1.out_features % 64 != 0:
         raise ValueError(
@@ -195,17 +211,18 @@ def validate_grouped_mlp_dims(fc1, glu_op, fc2) -> None:
             f"Unsupported dims for FC2 (num_groups={fc2.num_groups}, "
             f"in_features={fc2.in_features}, out_features={fc2.out_features})."
         )
-    if fc1.out_features != 2 * fc2.in_features or fc1.num_groups != fc2.num_groups:
+    expected_fc1_out = 2 * fc2.in_features if _is_glu_activation(act_op) else fc2.in_features
+    if fc1.out_features != expected_fc1_out or fc1.num_groups != fc2.num_groups:
         raise ValueError(
             f"FC1 (num_groups={fc1.num_groups}, in_features={fc1.in_features}, "
             f"out_features={fc1.out_features}) "
             f"and FC2 (num_groups={fc2.num_groups}, in_features={fc2.in_features}, "
             f"out_features={fc2.out_features}) do not match."
         )
-    if glu_op.glu_interleave_size != 32:
+    if _is_glu_activation(act_op) and act_op.glu_interleave_size != 32:
         raise ValueError(
             "Fused kernel requires 32-wide GLU interleaving, "
-            f"but got glu_interleave_size={glu_op.glu_interleave_size}."
+            f"but got glu_interleave_size={act_op.glu_interleave_size}."
         )
 
 
@@ -214,8 +231,9 @@ def fuse_grouped_mlp_ops(
     *,
     recipe,
     fused_op_cls,
+    act_classes=None,
 ):
-    """Sliding-window fusion for GroupedLinear + scaled GLU + GroupedLinear.
+    """Sliding-window fusion for GroupedLinear + scaled activation + GroupedLinear.
 
     Parameters
     ----------
@@ -225,9 +243,13 @@ def fuse_grouped_mlp_ops(
         Quantization recipe.
     fused_op_cls : type
         Fused operation class with ``is_supported()`` classmethod and
-        constructor accepting ``fc1``, ``glu_op``, ``fc2`` keyword args. The
-        ``glu_op`` must be :class:`~transformer_engine.pytorch.ops.basic.swiglu.ScaledSwiGLU`
-        or :class:`~transformer_engine.pytorch.ops.basic.swiglu.ScaledClampedQGeGLU`.
+        constructor accepting ``fc1``, ``swiglu``, ``fc2`` keyword args. The
+        middle op must be an instance of one of ``act_classes``.
+    act_classes : tuple of type, optional
+        Activation op classes that this fusion should match. Defaults to the
+        gated activations
+        (:class:`~transformer_engine.pytorch.ops.basic.swiglu.ScaledSwiGLU`,
+        :class:`~transformer_engine.pytorch.ops.basic.swiglu.ScaledClampedQGeGLU`).
 
     Returns
     -------
@@ -239,6 +261,9 @@ def fuse_grouped_mlp_ops(
         ScaledClampedQGeGLU,
         ScaledSwiGLU,
     )
+
+    if act_classes is None:
+        act_classes = (ScaledSwiGLU, ScaledClampedQGeGLU)
 
     if not fused_op_cls.is_supported():
         return ops
@@ -252,7 +277,7 @@ def fuse_grouped_mlp_ops(
         matches_pattern = True
         if not (
             isinstance(window[0], GroupedLinear)
-            and isinstance(window[1], (ScaledSwiGLU, ScaledClampedQGeGLU))
+            and isinstance(window[1], act_classes)
             and isinstance(window[2], GroupedLinear)
         ):
             matches_pattern = False
@@ -269,8 +294,15 @@ def fuse_grouped_mlp_ops(
             or window[2].out_features % 64 != 0
         ):
             matches_pattern = False
-        elif window[1].glu_interleave_size != 32:
-            matches_pattern = False
+        else:
+            is_glu = isinstance(window[1], (ScaledSwiGLU, ScaledClampedQGeGLU))
+            expected_fc1_out = (
+                2 * window[2].in_features if is_glu else window[2].in_features
+            )
+            if window[0].out_features != expected_fc1_out:
+                matches_pattern = False
+            elif is_glu and window[1].glu_interleave_size != 32:
+                matches_pattern = False
 
         if matches_pattern:
             op = fused_op_cls(
