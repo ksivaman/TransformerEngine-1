@@ -4159,10 +4159,14 @@ class TestSequentialModules:
             fc1.backward_dw()
             fc2.backward_dw()
 
-        # Check for expected fusions
+        # Check for expected fusions. The cuDNN ``grouped_gemm_dsrelu`` kernel
+        # has no FC1-bias input (it recomputes ``relu(GEMM)`` rather than
+        # ``relu(GEMM + bias)``), so the fused SReLU path is only used when
+        # FC1 has no bias.
         if (
             quantization == "mxfp8"
             and dtype in (torch.bfloat16, torch.float16)
+            and not bias
             and _cudnn_frontend_version_supported()
         ):
             if te_ops.fused.ForwardGroupedMLP_CuTeGEMMSReLU_MXFP8.is_supported():
@@ -4180,10 +4184,13 @@ class TestSequentialModules:
                     te_ops.fused.BackwardGroupedMLP_CuTeGEMMDSReLU_MXFP8,
                 )
 
-        # Loose tols for sanity checking
-        tols = {"rtol": 0.125, "atol": 0.25}
+        # Loose tols for sanity checking. SReLU squares its FC1 GEMM output,
+        # which amplifies bf16 / FP8 round-off by roughly 2|x| relative to
+        # SwiGLU/GeGLU at the same input ranges, so we use slightly looser
+        # tolerances than the SwiGLU/GeGLU MLP test.
+        tols = {"rtol": 0.25, "atol": 0.5}
         if quantization == "nvfp4":
-            tols = {"rtol": 0.25, "atol": 0.5}
+            tols = {"rtol": 0.5, "atol": 1.0}
 
         # Check values
         assert_close(y_test, y_ref, **tols)

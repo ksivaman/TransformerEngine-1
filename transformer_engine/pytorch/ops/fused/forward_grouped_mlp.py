@@ -574,6 +574,15 @@ class ForwardGroupedMLP_CuTeGEMMSReLU_MXFP8(ForwardGroupedMLP_CuTeGEMMSwiGLU_MXF
         validate_grouped_mlp_dims(fc1, swiglu, fc2)
         self._configure_act_op(swiglu)
 
+    @classmethod
+    def is_compatible_with_ops(cls, *, fc1, act, fc2) -> bool:  # pylint: disable=unused-argument
+        # The cuDNN ``grouped_gemm_dsrelu`` kernel internally recomputes the
+        # FC1 forward GEMM but does not accept a bias input, so its
+        # ``relu(GEMM)`` derivative would diverge from the true forward
+        # ``relu(GEMM + bias)`` when FC1 has a non-zero bias. Decline the
+        # fusion in that case so the eager path runs instead.
+        return not fc1.has_bias
+
     def _configure_act_op(self, act_op) -> None:
         # SReLU has no act_func variant.
         self._cudnn_act_func = None  # unused

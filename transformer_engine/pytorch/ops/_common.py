@@ -305,6 +305,13 @@ def fuse_grouped_mlp_ops(
                 matches_pattern = False
 
         if matches_pattern:
+            check = getattr(fused_op_cls, "is_compatible_with_ops", None)
+            if check is not None and not check(
+                fc1=window[0], act=window[1], fc2=window[2]
+            ):
+                matches_pattern = False
+
+        if matches_pattern:
             op = fused_op_cls(
                 fc1=window[0],
                 swiglu=window[1],
