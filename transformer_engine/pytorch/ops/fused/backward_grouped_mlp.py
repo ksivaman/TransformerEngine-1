@@ -328,6 +328,24 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             "act_func": self._cudnn_dact_func,
         }
 
+    def _compute_fc2_dgrad_dactivation(
+        self,
+        fc2_dglu_kwargs: dict,
+        # ``state`` carries per-call locals that some subclasses (e.g. SReLU)
+        # need but the default GLU implementation ignores.
+        **state,  # pylint: disable=unused-argument
+    ) -> dict:
+        """Run the fused FC2 dgrad + dactivation kernel and return its output dict.
+
+        For SwiGLU/GeGLU the dGLU kernel fuses the FC2 dgrad GEMM with the
+        activation backward in a single launch. Subclasses that cannot use a
+        single fused launch (e.g. SReLU) override this hook to issue an
+        equivalent multi-step computation while preserving the same output
+        dict layout (``d_row_tensor``/``d_col_tensor``/``sfd_*``/
+        ``dprob_tensor``/``dbias_tensor``).
+        """
+        return self.grouped_gemm_dglu_kernel()(**fc2_dglu_kwargs)
+
     def fuser_backward(
         self,
         basic_op_ctxs: list[OperationContext],
@@ -518,7 +536,23 @@ class BackwardGroupedMLP_CuTeGEMMDSwiGLU_MXFP8(FusedOperation):
             fc2_dglu_kwargs["b_dtype"] = torch.float8_e4m3fn
             fc2_dglu_kwargs["b_major"] = "n"
 
-        fc2_dgrad_kernel_out = self.grouped_gemm_dglu_kernel()(**fc2_dglu_kwargs)
+        fc2_dgrad_kernel_out = self._compute_fc2_dgrad_dactivation(
+            fc2_dglu_kwargs,
+            fc1_op=fc1_op,
+            fc1_weight_shape=fc1_weight_shape,
+            grouped_fc1_x=grouped_fc1_x,
+            grouped_fc1_weight=grouped_fc1_weight,
+            num_groups=num_groups,
+            out_shape=out_shape,
+            dtype=dtype,
+            device=device,
+            alpha_tensor=alpha_tensor,
+            norm_const_tensor=norm_const_tensor,
+            scales_tensor=scales_tensor,
+            dscales_tensor=dscales_tensor,
+            split_points=split_points,
+            current_stream=current_stream,
+        )
 
         fc1_dy_row_data = fc2_dgrad_kernel_out["d_row_tensor"]
         fc1_dy_row_data = fc1_dy_row_data.view(out_shape[0], fc1_weight_shape[0])
@@ -754,6 +788,146 @@ class BackwardGroupedMLP_CuTeGEMMDSReLU_MXFP8(BackwardGroupedMLP_CuTeGEMMDSwiGLU
     def _fc2_dact_kwargs(self, *, alpha_tensor: torch.Tensor) -> dict:
         # The dSReLU wrapper does not accept ``act_func`` or ``beta_tensor``.
         return {}
+
+    def _compute_fc2_dgrad_dactivation(
+        self,
+        fc2_dglu_kwargs: dict,
+        *,
+        fc1_op: GroupedLinear,
+        fc1_weight_shape: tuple,
+        grouped_fc1_x: GroupedTensor,
+        grouped_fc1_weight,
+        num_groups: int,
+        out_shape: list,
+        dtype: torch.dtype,
+        device: torch.device,
+        alpha_tensor: torch.Tensor,
+        norm_const_tensor: torch.Tensor,
+        scales_tensor: torch.Tensor,
+        dscales_tensor: torch.Tensor,
+        split_points: torch.Tensor,
+        current_stream,
+    ) -> dict:
+        """SReLU variant: FC2 dgrad GEMM, then ``grouped_gemm_dsrelu`` kernel.
+
+        The dSReLU kernel internally GEMMs ``A @ B^T`` and applies SReLU' on
+        the result, so it expects ``A`` = forward FC1 input and ``B`` = FC1
+        weight (matching the forward FC1 GEMM operands), with ``C`` set to
+        the upstream gradient at the activation output (= grad_output @
+        FC2_weight^T). We therefore emit two kernels:
+
+        1. FC2 dgrad GEMM via ``grouped_gemm_quant`` to produce a high-precision
+           upstream gradient tensor (used as ``C`` for dSReLU).
+        2. The dSReLU kernel itself, fed with the rowwise-quantized FC1 input
+           and rowwise-quantized FC1 weight that were preserved in forward.
+        """
+        if grouped_fc1_x is None or grouped_fc1_x.rowwise_data is None:
+            raise RuntimeError(
+                "ScaledSReLU fused backward requires the rowwise FP8 data of "
+                "the FC1 input to be preserved by the fused forward."
+            )
+
+        # FC2 dgrad GEMM: produces upstream gradient at the activation output
+        # in high precision (BF16/FP16). This is the ``C`` tensor for dSReLU.
+        fc2_dgrad_kwargs = {
+            "a_tensor": fc2_dglu_kwargs["a_tensor"],
+            "sfa_tensor": fc2_dglu_kwargs["sfa_tensor"],
+            "padded_offsets": split_points,
+            "alpha_tensor": alpha_tensor.float(),
+            "norm_const_tensor": None,
+            "prob_tensor": torch.ones(
+                (out_shape[0], 1, 1), dtype=torch.float32, device=device
+            ),
+            "acc_dtype": torch.float32,
+            "d_dtype": dtype,
+            "cd_major": "n",
+            "sf_vec_size": MXFP8_BLOCK_SCALING_SIZE,
+            "current_stream": current_stream,
+            "discrete_col_sfd": True,
+            "use_dynamic_sched": True,
+        }
+        for key in ("b_tensor", "sfb_tensor", "b_ptrs", "sfb_ptrs", "n", "b_dtype", "b_major"):
+            if key in fc2_dglu_kwargs:
+                fc2_dgrad_kwargs[key] = fc2_dglu_kwargs[key]
+
+        fc2_dgrad_out = self.grouped_gemm_quant_kernel()(**fc2_dgrad_kwargs)
+        grad_act_y = fc2_dgrad_out["d_tensor"]
+
+        # Pack rowwise FP8 data + scales for FC1 input (same layout as forward).
+        in_features = fc1_weight_shape[1]
+        fc1_x_data = grouped_fc1_x.rowwise_data.view(out_shape[0], in_features)
+        fc1_x_data = fc1_x_data.view(dtype=torch.float8_e4m3fn)
+        fc1_x_data = fc1_x_data.unsqueeze(0).permute(1, 2, 0)
+        fc1_x_scales = grouped_fc1_x.scale_inv
+        fc1_x_scales = fc1_x_scales.view(dtype=torch.float8_e8m0fnu)
+        fc1_x_scales = fc1_x_scales.view(
+            1,
+            (out_shape[0] + 127) // 128,
+            (in_features + 127) // 128,
+            MXFP8_BLOCK_SCALING_SIZE,
+            4,
+            4,
+        )
+        fc1_x_scales = fc1_x_scales.permute(3, 4, 1, 5, 2, 0)
+
+        dsrelu_kwargs = {
+            "a_tensor": fc1_x_data,
+            "c_tensor": grad_act_y,
+            "sfa_tensor": fc1_x_scales,
+            "padded_offsets": split_points,
+            "alpha_tensor": alpha_tensor,
+            "prob_tensor": scales_tensor,
+            "dprob_tensor": dscales_tensor,
+            "generate_dbias": fc1_op.has_bias,
+            "norm_const_tensor": norm_const_tensor,
+            "d_dtype": torch.float8_e4m3fn,
+            "cd_major": "n",
+            "sf_vec_size": MXFP8_BLOCK_SCALING_SIZE,
+            "current_stream": current_stream,
+            "discrete_col_sfd": True,
+            "use_dynamic_sched": True,
+        }
+
+        if fc1_op.single_grouped_weight:
+            # Clone and swizzle scales for rowwise GEMM (original kept intact for
+            # the standalone FC1 dgrad GEMM later, which needs columnwise data).
+            fc1_weight_for_dsrelu = grouped_fc1_weight.copy()
+            tex.grouped_swizzle_for_gemm(
+                fc1_weight_for_dsrelu, rowwise=True, columnwise=False
+            )
+
+            fc1_w_data = fc1_weight_for_dsrelu.rowwise_data
+            fc1_w_data = fc1_w_data.view(dtype=torch.float8_e4m3fn)
+            fc1_w_data = fc1_w_data.view(num_groups, fc1_weight_shape[0], fc1_weight_shape[1])
+            fc1_w_data = fc1_w_data.permute(1, 2, 0)
+            fc1_w_scales = fc1_weight_for_dsrelu.scale_inv.view(dtype=torch.float8_e8m0fnu)
+            fc1_w_scales = fc1_w_scales.view(
+                num_groups,
+                (fc1_weight_shape[0] + 127) // 128,
+                (fc1_weight_shape[1] + 127) // 128,
+                MXFP8_BLOCK_SCALING_SIZE,
+                4,
+                4,
+            )
+            fc1_w_scales = fc1_w_scales.permute(3, 4, 1, 5, 2, 0)
+
+            dsrelu_kwargs["b_tensor"] = fc1_w_data
+            dsrelu_kwargs["sfb_tensor"] = fc1_w_scales
+        else:
+            fc1_b_ptrs, fc1_sfb_ptrs, _fc1_sw = tex.get_device_pointer_for_data_and_scales(
+                [w._rowwise_data for w in grouped_fc1_weight],
+                [w._rowwise_scale_inv for w in grouped_fc1_weight],
+                swizzle=True,
+                rowwise=True,
+                data_dtype=grouped_fc1_weight[0]._fp8_dtype,
+            )
+            dsrelu_kwargs["b_ptrs"] = fc1_b_ptrs
+            dsrelu_kwargs["sfb_ptrs"] = fc1_sfb_ptrs
+            dsrelu_kwargs["n"] = fc1_weight_shape[0]
+            dsrelu_kwargs["b_dtype"] = torch.float8_e4m3fn
+            dsrelu_kwargs["b_major"] = "k"
+
+        return self.grouped_gemm_dglu_kernel()(**dsrelu_kwargs)
 
 
 def fuse_backward_ops(

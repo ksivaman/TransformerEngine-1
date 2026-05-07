@@ -109,6 +109,23 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         """Activation-specific kwargs to pass to the FC1 fused activation kernel."""
         return {"act_func": self._cudnn_act_func}
 
+    def _clear_saved_grouped_x_rowwise(
+        self,
+        grouped_fc1_x: Optional[GroupedTensor],
+        grouped_fc2_x: Optional[GroupedTensor],
+    ) -> None:
+        """Drop the rowwise FP8 storage of the saved input ``GroupedTensor``s.
+
+        The fused SwiGLU/GeGLU backward only needs the columnwise data for FC1/FC2
+        wgrad GEMMs, so we free the rowwise buffers here. Subclasses whose fused
+        backward needs the rowwise FC1 input (e.g. SReLU recomputes the FC1 GEMM
+        inside the dSReLU kernel) should override this hook to retain it.
+        """
+        for grouped_fc_x in (grouped_fc1_x, grouped_fc2_x):
+            if grouped_fc_x is not None:
+                grouped_fc_x.rowwise_data = None
+                grouped_fc_x.scale_inv = None
+
     def fuser_forward(
         self,
         basic_op_ctxs: list[OperationContext],
@@ -460,11 +477,10 @@ class ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8(FusedOperation):
         if requires_grad:
             mark_grouped_tensor(grouped_fc1_x, swiglu_in, scales, grouped_fc2_x)
 
-            # Save the input ``GroupedTensor``s themselves for the activations.
-            for grouped_fc_x in (grouped_fc1_x, grouped_fc2_x):
-                if grouped_fc_x is not None:
-                    grouped_fc_x.rowwise_data = None
-                    grouped_fc_x.scale_inv = None
+            # Drop FP8 buffers from the saved input ``GroupedTensor``s that the
+            # fused backward does not need. Subclasses can override this hook
+            # to retain rowwise data when their fused backward requires it.
+            self._clear_saved_grouped_x_rowwise(grouped_fc1_x, grouped_fc2_x)
 
             # FC1 saved-tensor layout.
             #   [split_sizes, base_split_offsets, split_points,
@@ -565,6 +581,19 @@ class ForwardGroupedMLP_CuTeGEMMSReLU_MXFP8(ForwardGroupedMLP_CuTeGEMMSwiGLU_MXF
     def _fc1_act_kwargs(self) -> dict[str, Any]:
         # The SReLU wrapper does not accept an ``act_func`` kwarg.
         return {}
+
+    def _clear_saved_grouped_x_rowwise(
+        self,
+        grouped_fc1_x: Optional[GroupedTensor],
+        grouped_fc2_x: Optional[GroupedTensor],
+    ) -> None:
+        # The dSReLU fused backward recomputes the FC1 forward GEMM via the
+        # cuDNN ``grouped_gemm_dsrelu`` kernel, which requires the rowwise FP8
+        # FC1 input. Keep that buffer alive; only free the FC2 input rowwise
+        # storage which is unused in backward.
+        if grouped_fc2_x is not None:
+            grouped_fc2_x.rowwise_data = None
+            grouped_fc2_x.scale_inv = None
 
 
 def fuse_forward_ops(
