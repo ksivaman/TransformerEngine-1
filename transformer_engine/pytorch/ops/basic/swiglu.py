@@ -17,7 +17,154 @@ from ...utils import clear_tensor_data
 from ..op import BasicOperation, OperationContext
 from .._common import maybe_dequantize
 
-__all__ = ["SwiGLU", "ClampedSwiGLU", "ScaledSwiGLU", "ScaledClampedQGeGLU"]
+__all__ = [
+    "SwiGLU",
+    "ClampedSwiGLU",
+    "ScaledSwiGLU",
+    "ScaledClampedQGeGLU",
+    "interleave_glu_weight",
+    "deinterleave_glu_weight",
+]
+
+
+def _check_glu_dim(
+    tensor: torch.Tensor,
+    glu_interleave_size: int,
+    dim: int,
+) -> int:
+    """Resolve and validate a GLU axis on ``tensor``.
+
+    The GLU axis must have size ``2N`` with ``N`` a non-zero multiple of
+    ``glu_interleave_size``.
+    """
+    if not isinstance(glu_interleave_size, int) or glu_interleave_size <= 0:
+        raise ValueError(
+            f"glu_interleave_size must be a positive integer, got {glu_interleave_size!r}."
+        )
+    if tensor.ndim == 0:
+        raise ValueError("Cannot permute a 0-dimensional tensor along a GLU axis.")
+    resolved = dim if dim >= 0 else dim + tensor.ndim
+    if resolved < 0 or resolved >= tensor.ndim:
+        raise ValueError(
+            f"dim={dim} is out of range for tensor with {tensor.ndim} dimensions."
+        )
+    glu_dim_size = tensor.size(resolved)
+    block = 2 * glu_interleave_size
+    if glu_dim_size == 0 or glu_dim_size % block != 0:
+        raise ValueError(
+            f"GLU axis (dim={dim}, size={glu_dim_size}) must be a non-zero multiple of "
+            f"2 * glu_interleave_size = {block}."
+        )
+    return resolved
+
+
+def interleave_glu_weight(
+    tensor: torch.Tensor,
+    *,
+    glu_interleave_size: int,
+    dim: int = 0,
+) -> torch.Tensor:
+    """Permute a GLU weight (or bias) from concatenated to block-interleaved layout.
+
+    The standard "concatenated" GLU layout places the gate ``a`` and linear ``b``
+    chunks back-to-back along ``dim`` (this is what plain
+    :class:`SwiGLU` / :class:`ClampedSwiGLU` consume)::
+
+        [a_1, ..., a_N, b_1, ..., b_N]
+
+    The "block-interleaved" layout (selected with ``glu_interleave_size`` on
+    :class:`SwiGLU` and friends, and required by the fused MXFP8 grouped MLP
+    kernels with ``glu_interleave_size = 32``) places size-``S`` blocks of
+    ``a`` and ``b`` in alternation along ``dim``, where
+    ``S = glu_interleave_size``::
+
+        [a_1, ..., a_S,
+         b_1, ..., b_S,
+         a_{S+1}, ..., a_{2S},
+         b_{S+1}, ..., b_{2S},
+         ...]
+
+    Use this to convert FC1 weights / biases from a checkpoint trained with a
+    standard SwiGLU into the layout consumed by the fused grouped MLP. FC2
+    weights, layer norms, embeddings, etc. do not need conversion.
+
+    This is the inverse of :func:`deinterleave_glu_weight`.
+
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        Tensor whose GLU axis should be permuted. The size of ``tensor`` along
+        ``dim`` must equal ``2N`` with ``N`` a non-zero multiple of
+        ``glu_interleave_size``. Typical inputs are an FC1 weight of shape
+        ``(2N, K)`` (``dim=0``), its bias of shape ``(2N,)`` (``dim=0``), or a
+        grouped variant of either with a leading ``num_groups`` axis.
+    glu_interleave_size : int
+        Block size for the alternating gate/linear pattern. The fused MXFP8
+        grouped MLP requires ``32``.
+    dim : int, default = 0
+        Dimension corresponding to the GLU axis (the ``2N`` axis). Negative
+        values count from the end.
+
+    Returns
+    -------
+    torch.Tensor
+        New contiguous tensor with the same shape and dtype as ``tensor``,
+        with the GLU axis re-permuted into the block-interleaved layout.
+    """
+    resolved = _check_glu_dim(tensor, glu_interleave_size, dim)
+    half = tensor.size(resolved) // 2
+    blocks = half // glu_interleave_size
+    new_shape = (
+        *tensor.shape[:resolved],
+        2,
+        blocks,
+        glu_interleave_size,
+        *tensor.shape[resolved + 1 :],
+    )
+    out = tensor.reshape(new_shape).transpose(resolved, resolved + 1).contiguous()
+    return out.reshape(tensor.shape)
+
+
+def deinterleave_glu_weight(
+    tensor: torch.Tensor,
+    *,
+    glu_interleave_size: int,
+    dim: int = 0,
+) -> torch.Tensor:
+    """Permute a GLU weight (or bias) from block-interleaved to concatenated layout.
+
+    Inverse of :func:`interleave_glu_weight`; see that function for layout
+    definitions and parameter semantics.
+
+    Use this to convert FC1 weights / biases from the layout used by the fused
+    grouped MLP back into the standard layout consumed by plain
+    :class:`SwiGLU` / :class:`ClampedSwiGLU` (e.g. for exporting a checkpoint
+    that should be readable by other implementations).
+
+    Parameters
+    ----------
+    tensor : torch.Tensor
+    glu_interleave_size : int
+    dim : int, default = 0
+
+    Returns
+    -------
+    torch.Tensor
+        New contiguous tensor with the same shape and dtype as ``tensor``,
+        with the GLU axis re-permuted into the concatenated layout.
+    """
+    resolved = _check_glu_dim(tensor, glu_interleave_size, dim)
+    half = tensor.size(resolved) // 2
+    blocks = half // glu_interleave_size
+    new_shape = (
+        *tensor.shape[:resolved],
+        blocks,
+        2,
+        glu_interleave_size,
+        *tensor.shape[resolved + 1 :],
+    )
+    out = tensor.reshape(new_shape).transpose(resolved, resolved + 1).contiguous()
+    return out.reshape(tensor.shape)
 
 
 class SwiGLU(BasicOperation):
