@@ -5,7 +5,7 @@
 """Python interface for attention"""
 
 from .dot_product_attention import DotProductAttention
-from .linear_attention import LinearAttention
+from .linear_attention import GDNConfig, GDNInputs, LinearAttention
 from .fused_mla_q_uproj import FusedMLAQUpProjFunction, FusedMLAQUpProjRopeQuant
 from .multi_head_attention import MultiheadAttention
 from .inference import InferenceParams
@@ -14,6 +14,8 @@ from .rope import RotaryPositionEmbedding
 __all__ = [
     "DotProductAttention",
     "LinearAttention",
+    "GDNConfig",
+    "GDNInputs",
     "FusedMLAQUpProjFunction",
     "FusedMLAQUpProjRopeQuant",
     "MultiheadAttention",

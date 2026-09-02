@@ -4,6 +4,7 @@
 
 """Python interface for linear attention"""
 
+from .gdn import GDNConfig, GDNInputs
 from .linear_attention import LinearAttention
 
-__all__ = ["LinearAttention"]
+__all__ = ["LinearAttention", "GDNConfig", "GDNInputs"]
