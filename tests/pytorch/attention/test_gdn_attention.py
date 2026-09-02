@@ -13,14 +13,20 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from transformer_engine.pytorch import LinearAttention, autocast, is_fp8_available
+from transformer_engine.pytorch import (
+    GDNConfig,
+    GDNInputs,
+    LinearAttention,
+    autocast,
+    is_fp8_available,
+)
 
 
 def _gdn_available() -> bool:
     if not torch.cuda.is_available():
         return False
     try:
-        from cudnn.linear_attention.ops import gated_delta_net  # noqa: F401
+        from cudnn.linear_attention.ops import gated_delta_net
     except (AttributeError, ImportError):
         return False
     try:
@@ -28,7 +34,7 @@ def _gdn_available() -> bool:
         has_cu_tile = importlib.util.find_spec("cuda.tile") is not None
     except (ImportError, ModuleNotFoundError):
         return False
-    return has_cutlass or has_cu_tile
+    return gated_delta_net is not None and (has_cutlass or has_cu_tile)
 
 
 _GDN_AVAILABLE = _gdn_available()
@@ -202,6 +208,28 @@ def _inputs(
     return q, k, v, g, beta
 
 
+def test_gdn_rejects_distinct_q_and_kv_sequence_boundaries():
+    """GDN retains its aligned-stream restriction behind the generic dual-offset API."""
+    q, k, v, g, beta = (tensor.squeeze(0) for tensor in _inputs(1, 128, 1, 1))
+    attention = LinearAttention(
+        variant=GDNConfig(),
+        num_attention_heads=1,
+        kv_channels=64,
+        qkv_format="thd",
+    )
+    cu_seqlens_q = torch.tensor([0, 128], device="cuda", dtype=torch.int32)
+    cu_seqlens_kv = cu_seqlens_q.clone()
+    with pytest.raises(ValueError, match="aligned Q and KV sequence boundaries"):
+        attention(
+            q,
+            k,
+            v,
+            variant_inputs=GDNInputs(g=g, beta=beta),
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_kv=cu_seqlens_kv,
+        )
+
+
 @requires_gdn
 @pytest.mark.parametrize("checkpoint_core_attention", [False, True], ids=["eager", "checkpoint"])
 @pytest.mark.parametrize(
@@ -228,6 +256,7 @@ def test_gdn_thd_forward_final_state_and_backward(
     ).requires_grad_()
 
     attention = LinearAttention(
+        variant=GDNConfig(use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel),
         num_attention_heads=heads,
         kv_channels=(qk_dim, v_dim),
         qkv_format="thd",
@@ -237,13 +266,12 @@ def test_gdn_thd_forward_final_state_and_backward(
         q,
         k,
         v,
+        variant_inputs=GDNInputs(g=g, beta=beta),
         cu_seqlens_q=cu_seqlens,
-        g=g,
-        beta=beta,
+        cu_seqlens_kv=cu_seqlens,
         initial_state=initial_state,
         output_final_state=True,
         checkpoint_core_attention=checkpoint_core_attention,
-        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
     )
     reference_inputs = {
         name: tensor.detach().double().reshape(1, -1, *tensor.shape[1:]).requires_grad_()
@@ -314,12 +342,13 @@ def test_gdn_dense_layout(qkv_format, dtype):
         expected = output_ref.reshape(batch, sequence, -1)
 
     attention = LinearAttention(
+        variant=GDNConfig(use_qk_l2norm_in_kernel=True),
         num_attention_heads=heads,
         kv_channels=dim,
         qkv_format=qkv_format,
         attn_mask_type="causal",
     )
-    output = attention(q, k, v, g=g, beta=beta, use_qk_l2norm_in_kernel=True)
+    output = attention(q, k, v, variant_inputs=GDNInputs(g=g, beta=beta))
     assert output.shape == expected.shape
     _assert_rms_close(output, expected, _FWD_TOL[dtype], "output")
 
@@ -328,13 +357,14 @@ def test_gdn_rejects_value_head_count_that_changes_output_width():
     """LinearAttention's configured output width cannot be changed by the runtime V tensor."""
     q, k, v, g, beta = _inputs(1, 128, 1, 2)
     attention = LinearAttention(
+        variant=GDNConfig(),
         num_attention_heads=1,
         kv_channels=64,
         qkv_format="bshd",
         attn_mask_type="causal",
     )
     with pytest.raises(ValueError, match="GDN V must have 1 heads"):
-        attention(q, k, v, g=g, beta=beta)
+        attention(q, k, v, variant_inputs=GDNInputs(g=g, beta=beta))
 
 
 @requires_gdn
@@ -344,6 +374,7 @@ def test_gdn_state_round_trip_matches_single_shot():
     split = 64
     q, k, v, g, beta = _inputs(batch, sequence, heads, heads, dim, dim)
     attention = LinearAttention(
+        variant=GDNConfig(),
         num_attention_heads=heads,
         kv_channels=dim,
         qkv_format="bshd",
@@ -351,21 +382,25 @@ def test_gdn_state_round_trip_matches_single_shot():
     )
 
     with torch.no_grad():
-        full_output, full_state = attention(q, k, v, g=g, beta=beta, output_final_state=True)
+        full_output, full_state = attention(
+            q,
+            k,
+            v,
+            variant_inputs=GDNInputs(g=g, beta=beta),
+            output_final_state=True,
+        )
         first_output, first_state = attention(
             q[:, :split],
             k[:, :split],
             v[:, :split],
-            g=g[:, :split],
-            beta=beta[:, :split],
+            variant_inputs=GDNInputs(g=g[:, :split], beta=beta[:, :split]),
             output_final_state=True,
         )
         second_output, chunked_state = attention(
             q[:, split:],
             k[:, split:],
             v[:, split:],
-            g=g[:, split:],
-            beta=beta[:, split:],
+            variant_inputs=GDNInputs(g=g[:, split:], beta=beta[:, split:]),
             initial_state=first_state,
             output_final_state=True,
         )
@@ -397,6 +432,7 @@ def test_gdn_thd_ragged_sequences(bounds):
         dtype=torch.float32,
     )
     attention = LinearAttention(
+        variant=GDNConfig(),
         num_attention_heads=heads,
         kv_channels=dim,
         qkv_format="thd",
@@ -408,9 +444,9 @@ def test_gdn_thd_ragged_sequences(bounds):
             q,
             k,
             v,
+            variant_inputs=GDNInputs(g=g, beta=beta),
             cu_seqlens_q=cu_seqlens,
-            g=g,
-            beta=beta,
+            cu_seqlens_kv=cu_seqlens,
             initial_state=initial_state,
             output_final_state=True,
         )
@@ -438,17 +474,18 @@ def test_gdn_thd_ragged_sequences(bounds):
     )
 
 
-def test_gdn_requires_both_gates():
-    """A partial GDN invocation fails before entering a softmax-attention backend."""
+def test_gdn_rejects_invalid_variant_inputs_type():
+    """GDN rejects variant inputs that do not use its typed runtime container."""
     q, k, v, g, _ = _inputs(1, 128, 1, 1)
     attention = LinearAttention(
+        variant=GDNConfig(),
         num_attention_heads=1,
         kv_channels=64,
         qkv_format="bshd",
         attn_mask_type="causal",
     )
-    with pytest.raises(ValueError, match="requires both g and beta"):
-        attention(q, k, v, g=g)
+    with pytest.raises(TypeError, match="GDNInputs instance"):
+        attention(q, k, v, variant_inputs={"g": g})
 
 
 @pytest.mark.skipif(not is_fp8_available(), reason="FP8 is not available")
@@ -456,19 +493,21 @@ def test_gdn_rejects_fp8_autocast():
     """GDN must not silently run in high precision inside FP8 autocast."""
     q, k, v, g, beta = _inputs(1, 128, 1, 1)
     attention = LinearAttention(
+        variant=GDNConfig(),
         num_attention_heads=1,
         kv_channels=64,
         qkv_format="bshd",
         attn_mask_type="causal",
     )
-    with autocast(enabled=True), pytest.raises(ValueError, match="does not support FP8 autocast"):
-        attention(q, k, v, g=g, beta=beta)
+    with autocast(enabled=True), pytest.raises(ValueError, match="GDN does not support FP8"):
+        attention(q, k, v, variant_inputs=GDNInputs(g=g, beta=beta))
 
 
 def test_gdn_runs_te_forward_lifecycle(monkeypatch):
     """GDN calls pair prepare_forward with end_forward even without the kernel runtime."""
     q, k, v, g, beta = _inputs(1, 128, 1, 1)
     attention = LinearAttention(
+        variant=GDNConfig(),
         num_attention_heads=1,
         kv_channels=64,
         qkv_format="bshd",
@@ -492,8 +531,8 @@ def test_gdn_runs_te_forward_lifecycle(monkeypatch):
 
     monkeypatch.setattr(attention, "prepare_forward", traced_prepare_forward)
     monkeypatch.setattr(attention, "end_forward", traced_end_forward)
-    monkeypatch.setattr(attention.gdn_attention, "forward", fake_gdn_forward)
+    monkeypatch.setattr(attention.backend, "forward", fake_gdn_forward)
 
-    output = attention(q, k, v, g=g, beta=beta)
+    output = attention(q, k, v, variant_inputs=GDNInputs(g=g, beta=beta))
     assert output.shape == (1, 128, 64)
     assert events == ["prepare", "end"]

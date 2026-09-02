@@ -25,8 +25,46 @@ PyTorch
 .. autoapiclass:: transformer_engine.pytorch.DotProductAttention(num_attention_heads, kv_channels, **kwargs)
   :members: forward, set_context_parallel_group
 
-.. autoapiclass:: transformer_engine.pytorch.LinearAttention(num_attention_heads, kv_channels, **kwargs)
+.. autoapiclass:: transformer_engine.pytorch.LinearAttention(variant, num_attention_heads, kv_channels, **kwargs)
   :members: forward
+
+.. autoapiclass:: transformer_engine.pytorch.GDNConfig(use_qk_l2norm_in_kernel=False)
+
+.. autoapiclass:: transformer_engine.pytorch.GDNInputs(g, beta)
+
+Gated DeltaNet example
+----------------------
+
+Gated DeltaNet is selected by :class:`~transformer_engine.pytorch.GDNConfig`. Its
+per-call gates are grouped in :class:`~transformer_engine.pytorch.GDNInputs`::
+
+  attention = LinearAttention(
+      variant=GDNConfig(use_qk_l2norm_in_kernel=True),
+      num_attention_heads=8,
+      kv_channels=(128, 128),
+      qkv_format="thd",
+      scale=None,
+  )
+  output, final_state = attention(
+      q,
+      k,
+      v,
+      variant_inputs=GDNInputs(g=g, beta=beta),
+      cu_seqlens_q=cu_seqlens,
+      cu_seqlens_kv=cu_seqlens,
+      initial_state=initial_state,
+      output_final_state=True,
+  )
+
+For packed THD input, GDN requires Q and KV to describe the same aligned Q, K, V, gate,
+and recurrent-state token stream. Pass the same tensor as ``cu_seqlens_q`` and
+``cu_seqlens_kv``, or leave ``cu_seqlens_kv`` unset. Other linear-attention variants may
+use distinct query and key/value sequence boundaries. GDN accepts FP16 or BF16 Q/K/V
+tensors, while its gates and state use FP32. The state shape is
+``[batch_size, num_attention_heads, v_head_dim, qk_head_dim]``; ``final_state`` can be
+passed as ``initial_state`` to continue the recurrence. GDN is inherently causal and does
+not support Transformer Engine FP8 autocast or FP8 calibration. ``scale`` multiplies the
+query and defaults to ``1 / sqrt(qk_head_dim)``.
 
 .. autoapiclass:: transformer_engine.pytorch.MultiheadAttention(hidden_size, num_attention_heads, **kwargs)
   :members: forward, set_context_parallel_group, set_tensor_parallel_group

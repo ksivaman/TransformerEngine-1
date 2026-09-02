@@ -5,10 +5,48 @@
 """cuDNN frontend Gated DeltaNet attention backend."""
 
 import importlib
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, NamedTuple, Optional, Tuple, Union
 
 import torch
+
+from transformer_engine.pytorch.quantization import FP8GlobalStateManager
+
+
+@dataclass(frozen=True)
+class GDNConfig:
+    """Static configuration for Gated DeltaNet linear attention.
+
+    Parameters
+    ----------
+    use_qk_l2norm_in_kernel : bool, default = `False`
+                             if true, L2-normalize Q and K inside the cuDNN frontend
+                             kernel before applying the recurrence.
+    """
+
+    use_qk_l2norm_in_kernel: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.use_qk_l2norm_in_kernel, bool):
+            raise TypeError("GDNConfig.use_qk_l2norm_in_kernel must be a bool.")
+
+
+class GDNInputs(NamedTuple):
+    """Per-call differentiable tensors for Gated DeltaNet.
+
+    Parameters
+    ----------
+    g : torch.Tensor
+        Per-head log-decay gate with dtype ``torch.float32``. Its shape is ``[s, b, h]``
+        for SBHD, ``[b, s, h]`` for BSHD, or ``[t, h]`` for packed THD input, where
+        ``h`` is the number of attention heads and ``t`` is the total token count.
+    beta : torch.Tensor
+        Per-head write-strength gate with the same shape and dtype requirements as ``g``.
+    """
+
+    g: torch.Tensor
+    beta: torch.Tensor
 
 
 @lru_cache(maxsize=1)
@@ -58,22 +96,57 @@ class _GatedDeltaNetAttention(torch.nn.Module):
 
     The cuDNN frontend GDN op is differentiated through ``torch.autograd`` (it registers
     its own backward internally), so this module does not define an explicit backward.
+    GDN accepts FP16 and BF16 Q/K/V tensors, but does not support Transformer Engine FP8
+    autocast or FP8 calibration. It is inherently causal. Packed THD inputs use one
+    sequence boundaries for the aligned Q, K, V, g, and beta token stream; dense inputs do
+    not accept explicit offsets. The optional recurrent state has shape
+    ``[batch_size, num_attention_heads, v_head_dim, qk_head_dim]`` and dtype
+    ``torch.float32``. A returned final state can seed a later invocation.
     """
+
+    num_gemms = 3
 
     def __init__(
         self,
+        variant: GDNConfig,
         scale: float,
         num_q_heads: int,
         qk_head_dim: int,
         v_head_dim: int,
+        attn_mask_type: str,
     ) -> None:
         super().__init__()
+        self.variant = variant
         self.scale = scale
         self.num_q_heads = num_q_heads
         self.qk_head_dim = qk_head_dim
         self.v_head_dim = v_head_dim
+        attn_mask_type = attn_mask_type.replace(",", "_")
+        if attn_mask_type == "causal_padding":
+            attn_mask_type = "padding_causal"
+        if attn_mask_type not in {"causal", "padding_causal"}:
+            raise ValueError(
+                "GDN is inherently causal and only supports "
+                f"attn_mask_type='causal' or 'padding_causal', got {attn_mask_type!r}."
+            )
+        self.attn_mask_type = attn_mask_type
         self._dense_cu_seqlens_key: Optional[Tuple[torch.device, int, int]] = None
         self._dense_cu_seqlens: Optional[torch.Tensor] = None
+
+    def unpack_variant_inputs(self, variant_inputs: object) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Validate and unpack GDN's typed per-call tensors for generic dispatch."""
+        if not isinstance(variant_inputs, GDNInputs):
+            raise TypeError(
+                "GDN requires variant_inputs to be a GDNInputs instance, got "
+                f"{type(variant_inputs).__name__}."
+            )
+        return variant_inputs.g, variant_inputs.beta
+
+    @staticmethod
+    def validate_runtime_environment() -> None:
+        """Reject Transformer Engine execution modes not supported by GDN."""
+        if FP8GlobalStateManager.is_fp8_enabled() or FP8GlobalStateManager.is_fp8_calibration():
+            raise ValueError("GDN does not support FP8 autocast or FP8 calibration.")
 
     def forward(
         self,
@@ -86,8 +159,8 @@ class _GatedDeltaNetAttention(torch.nn.Module):
         *,
         qkv_format: str,
         cu_seqlens_q: Optional[torch.Tensor] = None,
+        cu_seqlens_kv: Optional[torch.Tensor] = None,
         output_final_state: bool = False,
-        use_qk_l2norm_in_kernel: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Run GDN and return a TE-layout output, optionally with the final state."""
         if qkv_format not in {"thd", "bshd", "sbhd"}:
@@ -124,7 +197,7 @@ class _GatedDeltaNetAttention(torch.nn.Module):
         # The underlying op supports grouped value heads, but LinearAttention's output
         # contract is fixed at construction time. Integrations that use more V heads must
         # expand Q/K before LinearAttention.
-        # TODO: Support num_q_heads != num_v_heads once the output-width contract allows it.
+        # Future work: Support unequal Q and V head counts once the output contract allows it.
         if value_layer.shape[-2] != self.num_q_heads:
             raise ValueError(
                 f"GDN V must have {self.num_q_heads} heads, got {value_layer.shape[-2]}. "
@@ -174,11 +247,16 @@ class _GatedDeltaNetAttention(torch.nn.Module):
                 device=device,
                 name="cu_seqlens_q",
             )
+            if cu_seqlens_kv is not None and cu_seqlens_kv is not cu_seqlens_q:
+                raise ValueError(
+                    "GDN requires aligned Q and KV sequence boundaries. Pass "
+                    "cu_seqlens_kv=None or the same tensor object as cu_seqlens_q."
+                )
             cu_seqlens = cu_seqlens_q
         else:
-            if cu_seqlens_q is not None:
+            if cu_seqlens_q is not None or cu_seqlens_kv is not None:
                 raise ValueError(
-                    "Dense GDN inputs do not accept cu_seqlens_q. "
+                    "Dense GDN inputs do not accept cu_seqlens_q or cu_seqlens_kv. "
                     "Use qkv_format='thd' for packed or ragged batches."
                 )
             if qkv_format == "bshd":
@@ -232,7 +310,7 @@ class _GatedDeltaNetAttention(torch.nn.Module):
                 scale=self.scale,
                 initial_state=initial_state,
                 output_final_state=output_final_state,
-                use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+                use_qk_l2norm_in_kernel=self.variant.use_qk_l2norm_in_kernel,
             )
         except ImportError as exc:
             raise ImportError(
