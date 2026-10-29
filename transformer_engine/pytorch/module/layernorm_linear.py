@@ -778,7 +778,12 @@ def _layernorm_linear_setup_ctx(
     bwd_args.zero_centered_gamma = fwd_args.zero_centered_gamma
     bwd_args.bwd_ln_sm_margin = fwd_args.bwd_ln_sm_margin
     bwd_args.return_layernorm_output = fwd_args.return_layernorm_output
-    bwd_args.return_layernorm_output_gathered = fwd_args.return_layernorm_output_gathered
+    # Norm output is only gathered when the GEMM input is all-gathered
+    bwd_args.return_layernorm_output_gathered = (
+        fwd_args.return_layernorm_output_gathered
+        and fwd_args.parallel_mode == "column"
+        and fwd_args.sequence_parallel
+    )
 
     # Numerical / dtype config
     bwd_args.activation_dtype = fwd_args.activation_dtype
@@ -1169,6 +1174,8 @@ def _layernorm_linear_backward_impl(
             nvtx_range_push(f"{nvtx_label}.column_parallel_comm_dgrad")
             dgrad = gemm_out
             if args.sequence_parallel:
+                if args.return_layernorm_output_gathered:
+                    dgrad.add_(args.grad_ln_out)
                 dgrad, dgrad_work = reduce_scatter_along_first_dim(
                     dgrad,
                     args.tp_group,
